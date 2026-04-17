@@ -96,7 +96,7 @@ class UserState(rx.State):
         return list(reversed(self.progress_events))[:5]
 
     @rx.var
-    def stage_timeline(self) -> list[dict[str, str]]:
+    def stage_timeline(self) -> list[dict[str, Any]]:
         runtime_stage = self._latest_runtime_stage()
         current_index = (
             self.progress_timeline_labels.index(runtime_stage)
@@ -104,6 +104,7 @@ class UserState(rx.State):
             else -1
         )
         items: list[dict[str, str]] = []
+        total = len(self.progress_timeline_labels)
         for index, stage in enumerate(self.progress_timeline_labels):
             if self.status == "failed" and index == current_index:
                 tone = "error"
@@ -123,6 +124,8 @@ class UserState(rx.State):
                     "label": self._format_stage_label(stage),
                     "tone": tone,
                     "state": state,
+                    "index": str(index + 1),
+                    "is_last": index == total - 1,
                 }
             )
         return items
@@ -402,6 +405,9 @@ class UserState(rx.State):
         summary = record.result.summary if record.result else ""
         error = record.error or ""
         primary = summary or error
+        artifact_n = len(record.result.artifacts) if record.result else 0
+        stage_n = len(record.progress_timeline)
+        debug_n = len(record.debug_trace)
         return {
             "id": record.id,
             "workflow_name": record.workflow_name,
@@ -411,10 +417,13 @@ class UserState(rx.State):
             "summary": summary,
             "error": error,
             "preview": (primary.splitlines()[0] if primary else "")[:120],
-            "artifact_count": str(len(record.result.artifacts) if record.result else 0),
-            "stage_count": str(len(record.progress_timeline)),
+            "artifact_count": str(artifact_n),
+            "stage_count": str(stage_n),
             "debug_enabled": record.debug_enabled,
-            "debug_event_count": str(len(record.debug_trace)),
+            "debug_event_count": str(debug_n),
+            "meta_label": f"{stage_n} {'stage' if stage_n == 1 else 'stages'} · "
+            f"{artifact_n} {'artifact' if artifact_n == 1 else 'artifacts'} · "
+            f"{debug_n} {'trace event' if debug_n == 1 else 'trace events'}",
             "raw_result_json": record.raw_result_json or "",
             "timeline_text": self._format_timeline_text(record),
             "debug_trace_text": self._format_debug_trace_text(record),
