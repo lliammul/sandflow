@@ -218,10 +218,16 @@ class BuilderState(rx.State):
         self.editor_error = ""
         self.editor_notice = "New draft ready. Save to publish it instantly."
         self.validation_errors = []
-        self.workflow_name = "Untitled Workflow"
-        self.workflow_id = f"workflow-{uuid4().hex[:4]}"
-        self.workflow_description = ""
-        self.workflow_prompt = "Describe how the agent should inspect the inputs and produce the declared outputs."
+        self.workflow_name = "Review Document"
+        self.workflow_id = "review-document"
+        self.workflow_description = (
+            "Review an uploaded document and produce structured findings plus a powerpoint artifact."
+        )
+        self.workflow_prompt = (
+            "Review the provided document and produce a concise executive summary. "
+            "Return a JSON array of findings where each item includes severity, title, "
+            "evidence, and recommendation. If useful, you may also generate a supporting report file."
+        )
         self.workflow_active = True
         self.input_rows = [
             {
@@ -230,7 +236,7 @@ class BuilderState(rx.State):
                 "label": "Document",
                 "type": "file",
                 "required": True,
-                "help_text": "Upload a single source file.",
+                "help_text": "Upload a PDF, DOCX, TXT, or Markdown file.",
                 "errors": [],
             }
         ]
@@ -241,11 +247,21 @@ class BuilderState(rx.State):
                 "label": "Summary",
                 "type": "markdown",
                 "required": True,
-                "help_text": "Short narrative summary.",
+                "help_text": "A short executive summary.",
                 "errors": [],
             }
         ]
-        self.artifact_rows = []
+        self.artifact_rows = [
+            {
+                "row_key": row_key("artifact"),
+                "field_id": "report_file",
+                "label": "Report File",
+                "format": "pptx",
+                "required": True,
+                "help_text": "Required generated report pptx",
+                "errors": [],
+            }
+        ]
         self.snapshot = self._current_snapshot()
 
     def duplicate_selected_workflow(self):
