@@ -14,18 +14,21 @@ from ..components.common import (
     INK_2,
     INK_3,
     RULE,
-    SUCCESS_INK,
     SURFACE,
     SURFACE_STRONG,
+    TEXT_SM,
+    TEXT_XL,
+    TEXT_XS,
     ghost_button,
     helper_text,
+    icon,
     mono_block,
     page_shell,
-    panel,
     pill,
     primary_button,
     section_header,
     status_dot,
+    stepper,
     sublabel,
 )
 from ..state.user_state import UserState
@@ -72,7 +75,21 @@ def workflow_sidebar() -> rx.Component:
         rx.cond(
             UserState.has_workflows,
             rx.vstack(rx.foreach(UserState.workflow_cards, workflow_card), spacing="1", width="100%"),
-            helper_text("No active workflows yet."),
+            rx.vstack(
+                helper_text("No active workflows yet."),
+                rx.link(
+                    "Create one in the Builder →",
+                    href="/builder",
+                    color=ACCENT,
+                    font_size=TEXT_XS,
+                    font_weight="600",
+                    text_decoration="none",
+                    _hover={"text_decoration": "underline"},
+                ),
+                spacing="1",
+                align="start",
+                width="100%",
+            ),
         ),
         spacing="2",
         align="start",
@@ -121,16 +138,17 @@ def current_workflow_header() -> rx.Component:
                 UserState.selected_workflow_name,
                 color=INK,
                 font_weight="700",
-                font_size="1.05rem",
-                letter_spacing="-0.01em",
+                font_size=TEXT_XL,
+                letter_spacing="-0.015em",
+                line_height="1.2",
             ),
             rx.cond(
                 UserState.selected_workflow_description != "",
                 rx.text(
                     UserState.selected_workflow_description,
                     color=INK_2,
-                    font_size="0.85rem",
-                    line_height="1.5",
+                    font_size=TEXT_SM,
+                    line_height="1.55",
                 ),
                 rx.fragment(),
             ),
@@ -236,13 +254,24 @@ def render_file_control(field: dict) -> rx.Component:
 def file_upload_empty() -> rx.Component:
     return rx.upload(
         rx.hstack(
-            rx.text(
-                "Drop file here or click to browse",
-                color=INK_2,
-                font_size="0.85rem",
+            icon("upload", size=16, color=INK_3),
+            rx.vstack(
+                rx.text(
+                    "Drop a file here, or click to browse",
+                    color=INK,
+                    font_size=TEXT_SM,
+                    font_weight="600",
+                ),
+                rx.text(
+                    "Accepts PDF, DOCX, TXT, or Markdown",
+                    color=INK_3,
+                    font_size=TEXT_XS,
+                ),
+                spacing="0",
+                align="start",
             ),
             rx.spacer(),
-            rx.text("select a file", color=INK_3, font_size="0.75rem"),
+            spacing="3",
             width="100%",
             align="center",
         ),
@@ -253,8 +282,8 @@ def file_upload_empty() -> rx.Component:
         border=f"1px dashed {RULE}",
         border_radius=CORNER,
         bg=SURFACE,
-        px="0.85rem",
-        py="0.7rem",
+        px="0.9rem",
+        py="0.9rem",
         pointer_events=rx.cond(UserState.is_running, "none", "auto"),
         opacity=rx.cond(UserState.is_running, "0.52", "1"),
         _hover={"border_color": ACCENT, "bg": SURFACE_STRONG},
@@ -338,27 +367,37 @@ def file_slot_inactive(field: dict) -> rx.Component:
 def action_row() -> rx.Component:
     return rx.hstack(
         primary_button(
-            "Run Workflow",
+            rx.hstack(
+                icon("play", size=14, color="#fffdf8"),
+                rx.text("Run Workflow", font_weight="600", font_size=TEXT_SM),
+                spacing="2",
+                align="center",
+            ),
             on_click=UserState.run_selected_workflow,
             disabled=~UserState.can_run,
             opacity=rx.cond(UserState.can_run, "1", "0.55"),
         ),
         ghost_button(
-            UserState.debug_mode_label,
+            rx.hstack(
+                icon("bug", size=14),
+                rx.text(UserState.debug_mode_label, font_size=TEXT_SM),
+                spacing="2",
+                align="center",
+            ),
             on_click=UserState.toggle_debug_mode,
             disabled=UserState.is_running,
         ),
         ghost_button(
-            "Clear",
+            rx.hstack(
+                icon("eraser", size=14),
+                rx.text("Clear", font_size=TEXT_SM),
+                spacing="2",
+                align="center",
+            ),
             on_click=UserState.clear_inputs,
             disabled=UserState.is_running,
         ),
         rx.spacer(),
-        rx.cond(
-            UserState.has_error,
-            rx.fragment(),
-            rx.fragment(),
-        ),
         width="100%",
         align="center",
     )
@@ -390,16 +429,10 @@ def runtime_section() -> rx.Component:
                 UserState.current_stage_label,
                 color=INK_3,
                 font_family=FONT_MONO,
-                font_size="0.72rem",
+                font_size=TEXT_XS,
             ),
         ),
-        rx.hstack(
-            rx.foreach(UserState.stage_timeline, stage_step),
-            spacing="0",
-            width="100%",
-            align="center",
-            wrap="wrap",
-        ),
+        stepper(UserState.stage_timeline),
         rx.cond(
             UserState.has_progress,
             rx.vstack(
@@ -416,62 +449,19 @@ def runtime_section() -> rx.Component:
     )
 
 
-def stage_step(step: dict) -> rx.Component:
-    dot_bg = rx.match(
-        step["state"],
-        ("complete", INK),
-        ("active", ACCENT),
-        ("failed", ERROR_INK),
-        "transparent",
-    )
-    dot_border = rx.match(
-        step["state"],
-        ("complete", INK),
-        ("active", ACCENT),
-        ("failed", ERROR_INK),
-        RULE,
-    )
-    return rx.hstack(
-        rx.box(
-            width="0.55rem",
-            height="0.55rem",
-            border_radius="50%",
-            bg=dot_bg,
-            border=rx.cond(step["state"] == "pending", f"1.5px solid {dot_border}", f"1.5px solid {dot_border}"),
-            flex_shrink="0",
-        ),
-        rx.text(
-            step["label"],
-            color=rx.cond(step["state"] == "pending", INK_3, INK),
-            font_weight=rx.cond(step["state"] == "active", "700", "500"),
-            font_size="0.78rem",
-        ),
-        rx.box(
-            height="1px",
-            bg=RULE,
-            flex_grow="1",
-            min_width="1rem",
-        ),
-        spacing="2",
-        align="center",
-        flex_grow="1",
-        min_width="0",
-    )
-
-
 def progress_event_card(event: dict) -> rx.Component:
     return rx.hstack(
         rx.text(
             event["timestamp_label"],
             color=INK_3,
             font_family=FONT_MONO,
-            font_size="0.72rem",
+            font_size=TEXT_XS,
             flex_shrink="0",
-            width="3.5rem",
+            min_width="3.5rem",
         ),
         rx.vstack(
             rx.hstack(
-                rx.text(event["title"], color=INK, font_weight="600", font_size="0.83rem"),
+                rx.text(event["title"], color=INK, font_weight="600", font_size=TEXT_SM),
                 pill(
                     event["kind_label"],
                     tone=rx.cond(
@@ -485,7 +475,7 @@ def progress_event_card(event: dict) -> rx.Component:
             ),
             rx.cond(
                 event["detail"] != "",
-                rx.text(event["detail"], color=INK_2, font_size="0.8rem", line_height="1.5"),
+                rx.text(event["detail"], color=INK_2, font_size=TEXT_SM, line_height="1.5"),
                 rx.fragment(),
             ),
             spacing="1",
@@ -493,7 +483,7 @@ def progress_event_card(event: dict) -> rx.Component:
             width="100%",
         ),
         rx.spacer(),
-        rx.text(event["stage_label"], color=INK_3, font_family=FONT_MONO, font_size="0.72rem"),
+        rx.text(event["stage_label"], color=INK_3, font_family=FONT_MONO, font_size=TEXT_XS),
         width="100%",
         align="start",
         border_bottom=f"1px solid {RULE}",
@@ -596,13 +586,17 @@ def artifact_row(artifact: dict) -> rx.Component:
         ),
         rx.spacer(),
         primary_button(
-            "Download",
+            rx.hstack(
+                icon("download", size=13, color="#fffdf8"),
+                rx.text("Download", font_weight="600", font_size=TEXT_XS),
+                spacing="2",
+                align="center",
+            ),
             on_click=UserState.download_artifact(
                 artifact["stored_path"],
                 artifact["filename"],
                 artifact["mime_type"],
             ),
-            font_size="0.78rem",
             px="0.7rem",
             py="0.3rem",
         ),
@@ -625,13 +619,13 @@ def history_section() -> rx.Component:
                 " runs",
                 color=INK_3,
                 font_family=FONT_MONO,
-                font_size="0.72rem",
+                font_size=TEXT_XS,
             ),
         ),
         rx.cond(
             UserState.runs.length() > 0,
             rx.vstack(rx.foreach(UserState.runs, run_row), spacing="0", width="100%"),
-            helper_text("No runs recorded yet."),
+            helper_text("No runs recorded yet. Fill the form above and press Run Workflow to see results here."),
         ),
         spacing="2",
         align="start",
@@ -641,32 +635,30 @@ def history_section() -> rx.Component:
 
 def run_row(run: dict) -> rx.Component:
     expanded = UserState.expanded_run_id == run["id"]
+    status_tone = rx.cond(run["status"] == "complete", "success", "error")
     return rx.box(
         rx.vstack(
             rx.hstack(
-                status_dot(tone=rx.cond(run["status"] == "complete", "success", "error")),
-                rx.text(run["workflow_name"], color=INK, font_weight="600", font_size="0.85rem"),
-                pill(
-                    run["status"],
-                    tone=rx.cond(run["status"] == "complete", "success", "error"),
-                ),
+                status_dot(tone=status_tone, size="0.5rem"),
+                rx.text(run["workflow_name"], color=INK, font_weight="600", font_size=TEXT_SM),
                 rx.spacer(),
                 rx.text(
                     run["started_label"],
                     color=INK_3,
                     font_family=FONT_MONO,
-                    font_size="0.72rem",
+                    font_size=TEXT_XS,
                 ),
+                spacing="2",
+                align="center",
+                width="100%",
+            ),
+            rx.hstack(
+                rx.box(width="0.5rem", flex_shrink="0"),
                 rx.text(
-                    run["stage_count"],
-                    " stages · ",
-                    run["artifact_count"],
-                    " artifacts · ",
-                    run["debug_event_count"],
-                    " trace",
+                    run["meta_label"],
                     color=INK_3,
                     font_family=FONT_MONO,
-                    font_size="0.72rem",
+                    font_size=TEXT_XS,
                 ),
                 spacing="2",
                 align="center",
