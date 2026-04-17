@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from monrovia_demo.models import (
+from sandflow.models import (
     ArtifactOutputDefinition,
     WorkflowDebugTraceEntry,
     InputFieldDefinition,
@@ -16,8 +16,8 @@ from monrovia_demo.models import (
     WorkflowRunTimelineEntry,
     validate_execution_result,
 )
-from monrovia_demo.storage import ensure_storage, load_run_records, run_file_path, workflow_file_path
-from monrovia_demo.workflow_registry import delete_workflow, get_workflow, save_workflow
+from sandflow.storage import ensure_storage, load_run_records, run_file_path, workflow_file_path
+from sandflow.workflow_registry import delete_workflow, get_workflow, save_workflow
 
 
 def test_workflow_definition_rejects_duplicate_input_ids():
