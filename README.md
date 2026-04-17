@@ -1,4 +1,4 @@
-# Monrovia Workflow Console
+# sandflow Workflow Console
 
 Local Reflex app for building and running sandbox-backed workflows.
 
@@ -32,7 +32,7 @@ uv sync
 uv run reflex run
 ```
 
-Docker must be running locally. On the first workflow execution, Monrovia builds a local sandbox image with the Office/PDF Python dependencies baked in.
+Docker must be running locally. On the first workflow execution, sandflow builds a local sandbox image with the Office/PDF Python dependencies baked in.
 
 Then open `http://localhost:3000`.
 
@@ -54,11 +54,11 @@ Artifact outputs are declared by the builder in `/builder`. Each artifact has a 
 
 Tier-2 formats are handled with helper scripts mounted into the sandbox as a local skill pack:
 
-- `monrovia_demo/sandbox_skills/office-artifacts/SKILL.md`
-- `monrovia_demo/sandbox_skills/office-artifacts/scripts/create_csv.py`
-- `monrovia_demo/sandbox_skills/office-artifacts/scripts/create_docx.py`
-- `monrovia_demo/sandbox_skills/office-artifacts/scripts/create_xlsx.py`
-- `monrovia_demo/sandbox_skills/office-artifacts/scripts/create_pptx.py`
+- `sandflow/sandbox_skills/office-artifacts/SKILL.md`
+- `sandflow/sandbox_skills/office-artifacts/scripts/create_csv.py`
+- `sandflow/sandbox_skills/office-artifacts/scripts/create_docx.py`
+- `sandflow/sandbox_skills/office-artifacts/scripts/create_xlsx.py`
+- `sandflow/sandbox_skills/office-artifacts/scripts/create_pptx.py`
 
 Inside the sandbox, the agent is instructed to consult `.agents/office-artifacts/` and use those scripts instead of trying to hand-author Office formats.
 
@@ -69,7 +69,7 @@ That means:
 - `xlsx` artifacts are generated with `openpyxl`
 - `pptx` artifacts are generated with `python-pptx`
 
-These libraries are baked into the Docker sandbox image under [`monrovia_demo/docker_sandbox/`](</Users/liam/conductor/workspaces/workflow-demo/monrovia/monrovia_demo/docker_sandbox>), so workflow runs do not depend on the host Python environment.
+These libraries are baked into the Docker sandbox image under [`sandflow/docker_sandbox/`](sandflow/docker_sandbox/), so workflow runs do not depend on the host Python environment.
 
 ## Storage layout
 
@@ -84,8 +84,8 @@ These libraries are baked into the Docker sandbox image under [`monrovia_demo/do
 
 ## Notes
 
-- The Reflex app entrypoint is `monrovia_demo/app.py`
-- Route components live in `monrovia_demo/pages/`
-- State lives in `monrovia_demo/state/`
-- The generic sandbox runner lives in `monrovia_demo/workflow_runner.py`
+- The Reflex app entrypoint is `sandflow/app.py`
+- Route components live in `sandflow/pages/`
+- State lives in `sandflow/state/`
+- The generic sandbox runner lives in `sandflow/workflow_runner.py`
 - Workflow definitions live in `.application/workflows/` and are published instantly on save

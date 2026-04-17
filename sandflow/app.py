@@ -12,10 +12,10 @@ app = rx.App(
     theme=rx.theme(appearance="light"),
     stylesheets=STYLESHEETS,
 )
-app.add_page(user_page, route="/", title="Monrovia User Console", on_load=UserState.load_page)
+app.add_page(user_page, route="/", title="sandflow User Console", on_load=UserState.load_page)
 app.add_page(
     builder_page,
     route="/builder",
-    title="Monrovia Builder Console",
+    title="sandflow Builder Console",
     on_load=BuilderState.load_page,
 )

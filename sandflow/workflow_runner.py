@@ -51,11 +51,11 @@ from .storage import (
 from .workflow_registry import get_workflow
 
 load_dotenv()
-SKILLS_SOURCE_DIR = Path("monrovia_demo/sandbox_skills")
-DOCKER_SANDBOX_DIR = Path("monrovia_demo/docker_sandbox")
+SKILLS_SOURCE_DIR = Path("sandflow/sandbox_skills")
+DOCKER_SANDBOX_DIR = Path("sandflow/docker_sandbox")
 DOCKER_SANDBOX_DOCKERFILE = DOCKER_SANDBOX_DIR / "Dockerfile"
 DOCKER_SANDBOX_REQUIREMENTS = DOCKER_SANDBOX_DIR / "requirements.txt"
-DOCKER_SANDBOX_IMAGE_PREFIX = "monrovia-sandbox"
+DOCKER_SANDBOX_IMAGE_PREFIX = "sandflow-sandbox"
 SANDBOX_REQUIRED_MODULES = ("docx", "pptx", "openpyxl", "pypdf")
 PROGRESS_EVENT_LIMIT = 50
 TIMELINE_SUMMARY_LIMIT = 20

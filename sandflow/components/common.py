@@ -59,7 +59,7 @@ def page_shell(
 def topbar(*, current: str) -> rx.Component:
     return rx.hstack(
         rx.text(
-            "Monrovia",
+            "sandflow",
             color=INK,
             font_weight="700",
             font_size="0.9rem",

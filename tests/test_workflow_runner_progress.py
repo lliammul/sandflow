@@ -9,12 +9,12 @@ from agents.items import MessageOutputItem, ToolCallItem, ToolCallOutputItem
 from agents.sandbox.types import ExecResult
 from agents.stream_events import AgentUpdatedStreamEvent, RawResponsesStreamEvent, RunItemStreamEvent
 
-from monrovia_demo.models import (
+from sandflow.models import (
     InputFieldDefinition,
     OutputFieldDefinition,
     WorkflowDefinition,
 )
-from monrovia_demo import workflow_runner
+from sandflow import workflow_runner
 
 
 class FakeSession:
