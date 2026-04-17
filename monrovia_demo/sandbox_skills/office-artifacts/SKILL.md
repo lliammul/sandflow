@@ -1,6 +1,6 @@
 ---
 name: office-artifacts
-description: Generate CSV, DOCX, XLSX, and PPTX workflow artifacts using the provided helper scripts instead of hand-building file formats.
+description: Generate CSV, DOCX, XLSX, and PPTX workflow artifacts with the correct Python libraries and file paths inside the sandbox.
 ---
 
 Use this skill whenever a workflow asks you to generate one of these artifact formats:
@@ -10,132 +10,112 @@ Use this skill whenever a workflow asks you to generate one of these artifact fo
 - `xlsx`
 - `pptx`
 
-## How to use this skill
+## Purpose
+
+This skill exists to tell you which libraries and file-writing patterns are available in the sandbox.
+
+It does not define the content or structure of the document for you.
+
+You should decide the document layout, wording, tables, slides, and overall presentation based on the workflow task itself.
+
+## Runtime rules
+
+When generating an artifact:
 
 1. Read the workflow definition and the declared artifact output `format`.
-2. Create a small JSON spec file in the workspace, usually under `outputs/tmp/`.
-3. Run the matching helper script from `scripts/`.
-4. Write the real artifact file under `outputs/artifacts/`.
-5. Reference that file from `outputs/result.json`.
+2. Write the real artifact file under `outputs/artifacts/`.
+3. Make sure the file is genuinely that format. Do not fake Office files with plain text.
+4. Write `outputs/result.json` only after the artifact exists.
+5. Reference artifact paths in `outputs/result.json` using relative workspace paths such as `outputs/artifacts/report.docx`.
 
-Do not try to hand-author Office file formats directly. Prefer these scripts.
+Do not write placeholder or fallback text into an Office file path.
 
-## Script guide
-
-### CSV
-
-```bash
-python3 .agents/office-artifacts/scripts/create_csv.py \
-  --spec outputs/tmp/export.json \
-  --output outputs/artifacts/export.csv
-```
-
-Expected spec:
-
-```json
-{
-  "headers": ["severity", "title", "recommendation"],
-  "rows": [
-    ["high", "Missing SLA", "Add service window commitments"]
-  ]
-}
-```
-
-You may also pass rows as objects:
-
-```json
-{
-  "rows": [
-    {"severity": "high", "title": "Missing SLA", "recommendation": "Add service window commitments"}
-  ]
-}
-```
+## Available libraries
 
 ### DOCX
 
-```bash
-python3 .agents/office-artifacts/scripts/create_docx.py \
-  --spec outputs/tmp/report.json \
-  --output outputs/artifacts/report.docx
+Use `python-docx`.
+
+Example:
+
+```python
+from docx import Document
+
+doc = Document()
+doc.add_heading("Quarterly Business Review", 0)
+doc.add_paragraph("Executive summary goes here.")
+doc.save("outputs/artifacts/report.docx")
 ```
 
-Expected spec:
+Use this when you want the agent to author the document structure directly in code.
 
-```json
-{
-  "title": "Review Report",
-  "subtitle": "Vendor addendum review",
-  "paragraphs": ["Short narrative summary."],
-  "sections": [
-    {
-      "heading": "Findings",
-      "bullets": ["High risk term", "Missing schedule"]
-    }
-  ],
-  "tables": [
-    {
-      "title": "Findings Table",
-      "headers": ["Severity", "Title", "Recommendation"],
-      "rows": [
-        ["High", "Termination clause", "Confirm notice period"]
-      ]
-    }
-  ]
-}
+### PPTX
+
+Use `python-pptx`.
+
+Example:
+
+```python
+from pptx import Presentation
+
+prs = Presentation()
+slide = prs.slides.add_slide(prs.slide_layouts[0])
+slide.shapes.title.text = "Quarterly Business Review"
+slide.placeholders[1].text = "Prepared by the workflow"
+prs.save("outputs/artifacts/slides.pptx")
 ```
 
 ### XLSX
 
-```bash
-python3 .agents/office-artifacts/scripts/create_xlsx.py \
-  --spec outputs/tmp/workbook.json \
-  --output outputs/artifacts/findings.xlsx
+Use `openpyxl`.
+
+Example:
+
+```python
+from openpyxl import Workbook
+
+wb = Workbook()
+ws = wb.active
+ws.title = "Findings"
+ws.append(["Severity", "Title", "Recommendation"])
+ws.append(["High", "Missing SLA", "Add service window commitments"])
+wb.save("outputs/artifacts/findings.xlsx")
 ```
 
-Expected spec:
+### CSV
 
-```json
-{
-  "sheets": [
-    {
-      "name": "Findings",
-      "headers": ["Severity", "Title", "Recommendation"],
-      "rows": [
-        ["High", "Termination clause", "Confirm notice period"]
-      ]
-    }
-  ]
-}
+Use the Python standard library `csv` module unless there is a strong reason not to.
+
+Example:
+
+```python
+import csv
+
+with open("outputs/artifacts/export.csv", "w", newline="", encoding="utf-8") as f:
+    writer = csv.writer(f)
+    writer.writerow(["severity", "title", "recommendation"])
+    writer.writerow(["high", "Missing SLA", "Add service window commitments"])
 ```
 
-### PPTX
+## Optional helper scripts
 
-```bash
-python3 .agents/office-artifacts/scripts/create_pptx.py \
-  --spec outputs/tmp/deck.json \
-  --output outputs/artifacts/summary-deck.pptx
-```
+Helper scripts are available under `.agents/office-artifacts/scripts/`.
 
-Expected spec:
+You may use them if they save time, but they are optional. They are not the default required workflow.
 
-```json
-{
-  "title": "Review Summary",
-  "subtitle": "Contract workflow run",
-  "slides": [
-    {
-      "title": "Top Findings",
-      "bullets": ["High risk termination language", "Missing attached schedule"]
-    }
-  ]
-}
-```
+Available helpers:
 
-## Recommended workflow
+- `create_csv.py`
+- `create_docx.py`
+- `create_xlsx.py`
+- `create_pptx.py`
 
-- Build the structured `fields` output first.
-- Convert those results into a compact JSON spec for the artifact.
-- Use the helper script.
-- If the helper script fails, stop and surface the error. Do not write placeholder text into an Office file path.
+Use them when a small generated spec is the fastest route. Otherwise, write the Python code yourself with the libraries above.
+
+## Recommended approach
+
+- First decide what the artifact should contain.
+- Then write Python that generates that artifact with the correct library.
+- Keep the document structure appropriate to the task instead of forcing a generic template.
 - Verify the file exists under `outputs/artifacts/`.
-- Then reference it in `outputs/result.json`.
+- Then write `outputs/result.json`.

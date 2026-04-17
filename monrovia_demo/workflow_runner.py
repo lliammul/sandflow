@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -15,7 +17,6 @@ from agents.sandbox import Manifest, SandboxAgent, SandboxRunConfig
 from agents.sandbox.capabilities import Capabilities
 from agents.sandbox.capabilities.skills import Skills
 from agents.sandbox.entries import File, LocalDir
-from agents.sandbox.sandboxes.unix_local import UnixLocalSandboxClient
 from agents.stream_events import AgentUpdatedStreamEvent, RunItemStreamEvent, StreamEvent
 from docx import Document
 from dotenv import load_dotenv
@@ -51,6 +52,11 @@ from .workflow_registry import get_workflow
 
 load_dotenv()
 SKILLS_SOURCE_DIR = Path("monrovia_demo/sandbox_skills")
+DOCKER_SANDBOX_DIR = Path("monrovia_demo/docker_sandbox")
+DOCKER_SANDBOX_DOCKERFILE = DOCKER_SANDBOX_DIR / "Dockerfile"
+DOCKER_SANDBOX_REQUIREMENTS = DOCKER_SANDBOX_DIR / "requirements.txt"
+DOCKER_SANDBOX_IMAGE_PREFIX = "monrovia-sandbox"
+SANDBOX_REQUIRED_MODULES = ("docx", "pptx", "openpyxl", "pypdf")
 PROGRESS_EVENT_LIMIT = 50
 TIMELINE_SUMMARY_LIMIT = 20
 
@@ -130,7 +136,7 @@ async def stream_workflow(
         remember(event)
         yield event
 
-    client = UnixLocalSandboxClient()
+    client, client_options = await _create_sandbox_backend()
     session = None
     try:
         async for event in emit(
@@ -172,7 +178,9 @@ async def stream_workflow(
 
         configure_openai_client()
         manifest = _build_manifest(workflow, input_summary)
-        session = await client.create(manifest=manifest)
+        session = await client.create(manifest=manifest, options=client_options)
+        await session.start()
+        await _ensure_sandbox_python_runtime(session)
 
         agent = SandboxAgent(
             name=workflow.name,
@@ -203,7 +211,7 @@ async def stream_workflow(
         )
 
         async for stream_event in run_result.stream_events():
-            if debug:
+            if debug and _should_capture_debug_trace(stream_event):
                 debug_trace.append(_build_debug_trace_entry(stream_event))
             mapped = _map_stream_event_to_progress(stream_event)
             if mapped is not None:
@@ -302,6 +310,10 @@ async def stream_workflow(
                 await session.stop()
             with contextlib.suppress(Exception):
                 await client.delete(session)
+        docker_sdk_client = getattr(client, "docker_client", None)
+        if docker_sdk_client is not None:
+            with contextlib.suppress(Exception):
+                docker_sdk_client.close()
 
 
 def _validate_run_inputs(
@@ -387,6 +399,78 @@ def _build_manifest(workflow: WorkflowDefinition, input_summary: WorkflowRunInpu
     return Manifest(entries=entries)
 
 
+async def _ensure_sandbox_python_runtime(session) -> None:
+    check_script = (
+        "python3 - <<'PY'\n"
+        f"import {', '.join(SANDBOX_REQUIRED_MODULES)}\n"
+        "print('sandbox python runtime ready')\n"
+        "PY"
+    )
+    result = await session.exec(check_script, shell=True)
+    if result.exit_code == 0:
+        return
+
+    stderr_text = result.stderr.decode("utf-8", errors="replace").strip()
+    stdout_text = result.stdout.decode("utf-8", errors="replace").strip()
+    detail = stderr_text or stdout_text or f"exit code {result.exit_code}"
+    raise RuntimeError(
+        "Sandbox Python preflight failed. "
+        "Office artifact generation requires docx/pptx/openpyxl/pypdf modules. "
+        f"Details: {detail}"
+    )
+
+
+async def _create_sandbox_backend():
+    try:
+        from docker import from_env as docker_from_env
+        from docker.errors import BuildError, DockerException, ImageNotFound
+        from agents.sandbox.sandboxes.docker import DockerSandboxClient, DockerSandboxClientOptions
+    except Exception as exc:
+        raise RuntimeError(
+            "Docker sandbox support is unavailable. Run `uv sync` so the `docker` package is installed."
+        ) from exc
+
+    try:
+        docker_client = await asyncio.to_thread(docker_from_env)
+        await asyncio.to_thread(docker_client.ping)
+    except DockerException as exc:
+        raise RuntimeError(
+            "Docker sandbox is unavailable. Start Docker and ensure the local daemon is reachable."
+        ) from exc
+
+    image_name, managed_image = _sandbox_image_reference()
+    if managed_image:
+        try:
+            await asyncio.to_thread(docker_client.images.get, image_name)
+        except ImageNotFound:
+            try:
+                await asyncio.to_thread(
+                    docker_client.images.build,
+                    path=str(DOCKER_SANDBOX_DIR.resolve()),
+                    dockerfile="Dockerfile",
+                    tag=image_name,
+                    rm=True,
+                    pull=True,
+                )
+            except (BuildError, DockerException) as exc:
+                raise RuntimeError(
+                    f"Failed to build Docker sandbox image `{image_name}` from `{DOCKER_SANDBOX_DIR}`."
+                ) from exc
+
+    return DockerSandboxClient(docker_client), DockerSandboxClientOptions(image=image_name)
+
+
+def _sandbox_image_reference() -> tuple[str, bool]:
+    configured_image = os.getenv("MONROVIA_SANDBOX_IMAGE", "").strip()
+    if configured_image:
+        return configured_image, False
+
+    digest = hashlib.sha256()
+    for path in (DOCKER_SANDBOX_DOCKERFILE, DOCKER_SANDBOX_REQUIREMENTS):
+        digest.update(path.read_bytes())
+    return f"{DOCKER_SANDBOX_IMAGE_PREFIX}:{digest.hexdigest()[:12]}", True
+
+
 def _build_agent_instructions(workflow: WorkflowDefinition) -> str:
     output_schema = {
         "summary": "short run summary shown to the user",
@@ -427,8 +511,13 @@ def _build_agent_instructions(workflow: WorkflowDefinition) -> str:
         "4. Artifact paths in outputs/result.json must be relative workspace paths under outputs/artifacts/.\n"
         "5. Do not fabricate missing inputs. Work only from workspace contents.\n\n"
         "6. For artifact generation, consult the mounted `office-artifacts` skill under `.agents/`.\n"
-        "   It includes working helper scripts for csv, docx, xlsx, and pptx outputs.\n"
-        "   Use `python3` to run those scripts in this environment.\n"
+        "   Use it to learn which libraries are available and how to use them correctly.\n"
+        "   Prefer writing Python directly with the appropriate library for the target format.\n"
+        "   For example: `python-docx` for docx, `python-pptx` for pptx, `openpyxl` for xlsx, and `csv` for csv.\n"
+        "   Choose the document or file structure based on the task itself instead of forcing a generic template.\n"
+        "   The helper scripts in `.agents/office-artifacts/scripts/` are optional fallbacks, not the default required path.\n"
+        "   Use `python3` to run your code in this environment.\n"
+        "   Avoid generic report scaffolding unless the task clearly calls for it.\n"
         "   Do not write placeholder or fallback text into Office files. If generation fails, stop and let the run fail.\n\n"
         "Expected result schema:\n"
         f"{json.dumps(output_schema, indent=2)}\n"
@@ -514,6 +603,10 @@ def _build_debug_trace_entry(event: StreamEvent) -> WorkflowDebugTraceEntry:
         title=title,
         payload=_stringify_debug_value(_debug_event_payload(event)),
     )
+
+
+def _should_capture_debug_trace(event: StreamEvent) -> bool:
+    return getattr(event, "type", "") != "raw_response_event"
 
 
 def _normalize_event_type(class_name: str) -> str:
@@ -660,6 +753,27 @@ def _stringify_debug_value(value: Any) -> str:
 
 
 def _debug_event_payload(value: Any, *, depth: int = 0) -> Any:
+    if isinstance(value, AgentUpdatedStreamEvent):
+        return {
+            "agent_name": getattr(getattr(value, "new_agent", None), "name", "") or "",
+        }
+    if isinstance(value, RunItemStreamEvent):
+        item = getattr(value, "item", None)
+        payload = {
+            "event_name": value.name,
+        }
+        if value.name in {"tool_called", "tool_output"}:
+            payload["tool_name"] = _friendly_tool_name(item)
+        detail = ""
+        if value.name == "tool_called":
+            detail = _extract_tool_call_detail(item)
+        elif value.name == "tool_output":
+            detail = _extract_tool_output_detail(item)
+        elif value.name == "message_output_created":
+            detail = _extract_message_detail(item)
+        if detail:
+            payload["detail"] = _truncate_text(detail, limit=500)
+        return payload
     if depth >= 6:
         return repr(value)
     if value is None or isinstance(value, (str, int, float, bool)):

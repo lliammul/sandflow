@@ -22,7 +22,7 @@ Local Reflex app for building and running sandbox-backed workflows.
 - Copies uploaded files under `.application/uploads`
 - Copies generated artifacts under `.application/artifacts`
 - Optional debug mode persists the full streamed agent trace with each run
-- Executes workflows through an OpenAI Unix-local sandbox agent
+- Executes workflows through an OpenAI Docker sandbox agent
 - Mounts a sandbox skill pack for Office-style artifact generation
 
 ## Run locally
@@ -31,6 +31,8 @@ Local Reflex app for building and running sandbox-backed workflows.
 uv sync
 uv run reflex run
 ```
+
+Docker must be running locally. On the first workflow execution, Monrovia builds a local sandbox image with the Office/PDF Python dependencies baked in.
 
 Then open `http://localhost:3000`.
 
@@ -67,7 +69,7 @@ That means:
 - `xlsx` artifacts are generated with `openpyxl`
 - `pptx` artifacts are generated with `python-pptx`
 
-These libraries are included in the local environment through `uv sync`, so the Unix-local sandbox can use them during workflow runs.
+These libraries are baked into the Docker sandbox image under [`monrovia_demo/docker_sandbox/`](</Users/liam/conductor/workspaces/workflow-demo/monrovia/monrovia_demo/docker_sandbox>), so workflow runs do not depend on the host Python environment.
 
 ## Storage layout
 
