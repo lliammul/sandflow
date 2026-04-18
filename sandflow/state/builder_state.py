@@ -218,50 +218,34 @@ class BuilderState(rx.State):
         self.editor_error = ""
         self.editor_notice = "New draft ready. Save to publish it instantly."
         self.validation_errors = []
-        self.workflow_name = "Review Document"
-        self.workflow_id = "review-document"
-        self.workflow_description = (
-            "Review an uploaded document and produce structured findings plus a powerpoint artifact."
-        )
-        self.workflow_prompt = (
-            "Review the provided document and produce a concise executive summary. "
-            "Return a JSON array of findings where each item includes severity, title, "
-            "evidence, and recommendation. If useful, you may also generate a supporting report file."
-        )
+        self.workflow_name = "New Workflow"
+        self.workflow_id = "workflow"
+        self.workflow_description = ""
+        self.workflow_prompt = "Describe what this workflow should do."
         self.workflow_active = True
         self.input_rows = [
             {
                 "row_key": row_key("in"),
-                "field_id": "document",
-                "label": "Document",
-                "type": "file",
+                "field_id": "input_1",
+                "label": "Input",
+                "type": "short_text",
                 "required": True,
-                "help_text": "Upload a PDF, DOCX, TXT, or Markdown file.",
+                "help_text": "",
                 "errors": [],
             }
         ]
         self.output_rows = [
             {
                 "row_key": row_key("out"),
-                "field_id": "summary",
-                "label": "Summary",
-                "type": "markdown",
+                "field_id": "output_1",
+                "label": "Result",
+                "type": "text",
                 "required": True,
-                "help_text": "A short executive summary.",
+                "help_text": "",
                 "errors": [],
             }
         ]
-        self.artifact_rows = [
-            {
-                "row_key": row_key("artifact"),
-                "field_id": "report_file",
-                "label": "Report File",
-                "format": "pptx",
-                "required": True,
-                "help_text": "Required generated report pptx",
-                "errors": [],
-            }
-        ]
+        self.artifact_rows = []
         self.snapshot = self._current_snapshot()
 
     def duplicate_selected_workflow(self):
