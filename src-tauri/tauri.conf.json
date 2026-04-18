@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Sandflow Desktop",
+  "version": "0.1.0",
+  "identifier": "com.sandflow.desktop",
+  "build": {
+    "beforeDevCommand": "npm --prefix web run dev",
+    "beforeBuildCommand": "npm --prefix web run build",
+    "devUrl": "http://localhost:3000",
+    "frontendDist": "../web/out"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Sandflow Desktop",
+        "width": 1480,
+        "height": 980,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["dmg"],
+    "macOS": {
+      "minimumSystemVersion": "13.0"
+    }
+  }
+}

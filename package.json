@@ -1,0 +1,12 @@
+{
+  "name": "sandflow-desktop-workspace",
+  "private": true,
+  "scripts": {
+    "dev:web": "npm --prefix web run dev",
+    "build:web": "npm --prefix web run build",
+    "dev:sidecar": "uv run --project python-sidecar python -m sandflow_sidecar --port 8000",
+    "test:sidecar": "uv run --project python-sidecar pytest python-sidecar/tests",
+    "tauri:dev": "./web/node_modules/.bin/tauri dev --config src-tauri/tauri.conf.json",
+    "tauri:build": "./web/node_modules/.bin/tauri build --config src-tauri/tauri.conf.json"
+  }
+}

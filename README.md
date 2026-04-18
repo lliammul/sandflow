@@ -1,91 +1,80 @@
-# sandflow Workflow Console
+# Sandflow Desktop MVP
 
-Local Reflex app for building and running sandbox-backed workflows.
+Sandflow is now structured as a desktop-first app:
 
-## Routes
+- `python-sidecar/`
+  - FastAPI sidecar for workflow storage, sandbox execution, SSE events, and artifact downloads
+- `web/`
+  - Next.js 16 frontend for runtime, builder, setup, and Customise flows
+- `src-tauri/`
+  - Tauri v2 shell for macOS runtime orchestration, git-backed customisation, and packaging
+- `sandflow/`
+  - legacy Reflex implementation kept only as a migration reference
 
-- `/`
-  - user mode
-  - shows only active workflows
-  - renders workflow-specific inputs and outputs
-- `/builder`
-  - builder mode
-  - creates and edits workflow definitions stored locally in `.application/workflows`
+## Local Development
 
-## What it does
-
-- Uses a local JSON registry for workflow definitions
-- Supports builder-defined text inputs and file inputs
-- Supports builder-defined structured outputs plus generated file artifacts
-- Supports tier-2 artifact formats: `csv`, `docx`, `xlsx`, `pptx`, plus `txt`, `md`, `json`, and `html`
-- Persists runs under `.application/runs`
-- Copies uploaded files under `.application/uploads`
-- Copies generated artifacts under `.application/artifacts`
-- Optional debug mode persists the full streamed agent trace with each run
-- Executes workflows through an OpenAI Docker sandbox agent
-- Mounts a sandbox skill pack for Office-style artifact generation
-
-## Run locally
+Install the web and sidecar dependencies:
 
 ```bash
-uv sync
-uv run reflex run
+npm install
+npm install --prefix web
+uv sync --project python-sidecar
 ```
 
-Docker must be running locally. On the first workflow execution, sandflow builds a local sandbox image with the Office/PDF Python dependencies baked in.
+Run the sidecar and web app separately during development:
 
-Then open `http://localhost:3000`.
-
-## Required runtime config
-
-Execution is live-only in this version. Builder mode works without credentials, but user runs are disabled until these values are set in `.env`:
-
-```env
-OPENAI_API_KEY=...
-OPENAI_API_BASE=https://your-endpoint.example.com/v1/
-OPENAI_SANDBOX_MODEL=your-model-name
+```bash
+npm run dev:sidecar
+npm run dev:web
 ```
 
-If you are using OpenAI directly, `OPENAI_API_BASE` can be omitted.
+The frontend expects the sidecar at `http://127.0.0.1:8000` unless `NEXT_PUBLIC_SIDECAR_BASE_URL` is set.
 
-## Artifact generation
+## Sidecar API
 
-Artifact outputs are declared by the builder in `/builder`. Each artifact has a `format`, and the sandbox runner enforces that the generated file matches that declared format.
+The Python sidecar exposes:
 
-Tier-2 formats are handled with helper scripts mounted into the sandbox as a local skill pack:
+- `GET /health`
+- `GET /workflow-entries`
+- `GET /workflows`
+- `GET /workflows/:id`
+- `PUT /workflows/:id`
+- `DELETE /workflows/:id`
+- `GET /runs`
+- `POST /workflows/:id/run`
+- `GET /runs/:id/events`
+- `GET /runs/:id`
+- `GET /runs/:id/artifacts/:artifact_id`
 
-- `sandflow/sandbox_skills/office-artifacts/SKILL.md`
-- `sandflow/sandbox_skills/office-artifacts/scripts/create_csv.py`
-- `sandflow/sandbox_skills/office-artifacts/scripts/create_docx.py`
-- `sandflow/sandbox_skills/office-artifacts/scripts/create_xlsx.py`
-- `sandflow/sandbox_skills/office-artifacts/scripts/create_pptx.py`
+Workflow runs stream progress and terminal events over SSE.
 
-Inside the sandbox, the agent is instructed to consult `.agents/office-artifacts/` and use those scripts instead of trying to hand-author Office formats.
+## Tests
 
-That means:
+Run the sidecar test suite:
 
-- `csv` artifacts are generated through a structured export helper
-- `docx` artifacts are generated with `python-docx`
-- `xlsx` artifacts are generated with `openpyxl`
-- `pptx` artifacts are generated with `python-pptx`
+```bash
+npm run test:sidecar
+```
 
-These libraries are baked into the Docker sandbox image under [`sandflow/docker_sandbox/`](sandflow/docker_sandbox/), so workflow runs do not depend on the host Python environment.
+Build the Next.js frontend:
 
-## Storage layout
+```bash
+npm run build:web
+```
 
-- `.application/workflows`
-  - persisted workflow definitions
-- `.application/runs`
-  - persisted run records
-- `.application/uploads`
-  - staged user uploads and per-run input copies
-- `.application/artifacts`
-  - persisted generated output files
+## Runtime Requirements
 
-## Notes
+- Docker must be running locally for workflow execution.
+- The sidecar requires `OPENAI_API_KEY` and `OPENAI_SANDBOX_MODEL` at runtime.
+- The desktop shell bootstraps a writable runtime repo in app-data and stores the OpenAI API key in the macOS Keychain.
 
-- The Reflex app entrypoint is `sandflow/app.py`
-- Route components live in `sandflow/pages/`
-- State lives in `sandflow/state/`
-- The generic sandbox runner lives in `sandflow/workflow_runner.py`
-- Workflow definitions live in `.application/workflows/` and are published instantly on save
+## Artifact Generation
+
+The sandbox image ships with:
+
+- `python-docx`
+- `python-pptx`
+- `openpyxl`
+- `pypdf`
+
+The mounted office artifact skill pack lives under `python-sidecar/src/sandflow_sidecar/sandbox_skills/office-artifacts/`.

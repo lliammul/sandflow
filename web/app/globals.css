@@ -1,0 +1,97 @@
+@import "tailwindcss";
+
+:root {
+  --page: #edf1f2;
+  --surface: rgba(255, 255, 255, 0.92);
+  --surface-strong: #f6f8f8;
+  --ink: #152129;
+  --muted: #566772;
+  --subtle: #7f9099;
+  --accent: #d45e3f;
+  --accent-soft: rgba(212, 94, 63, 0.12);
+  --line: rgba(21, 33, 41, 0.12);
+  --success: #2c6548;
+  --success-soft: rgba(44, 101, 72, 0.12);
+  --danger: #8a2f2b;
+  --danger-soft: rgba(138, 47, 43, 0.12);
+  --shadow: 0 30px 80px rgba(18, 29, 36, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background:
+    radial-gradient(circle at top left, rgba(212, 94, 63, 0.08), transparent 35%),
+    linear-gradient(180deg, #f4f6f6 0%, #edf1f2 45%, #e8ecee 100%);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--ink);
+  font-family: var(--font-body), sans-serif;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.45), transparent 45%),
+    radial-gradient(circle at bottom right, rgba(21, 33, 41, 0.05), transparent 30%);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.grain {
+  position: relative;
+}
+
+.grain::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.08)),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140' viewBox='0 0 140 140'%3E%3Cg fill='%23000000' fill-opacity='0.03'%3E%3Ccircle cx='12' cy='18' r='1'/%3E%3Ccircle cx='88' cy='38' r='1'/%3E%3Ccircle cx='44' cy='90' r='1'/%3E%3Ccircle cx='121' cy='104' r='1'/%3E%3Ccircle cx='67' cy='52' r='1'/%3E%3C/g%3E%3C/svg%3E");
+  mix-blend-mode: multiply;
+}
+
+.app-shell {
+  min-height: 100vh;
+  padding: 18px;
+}
+
+.app-grid {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 18px;
+  max-width: 1480px;
+  margin: 0 auto;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(22px);
+}
+
+.monoline {
+  font-family: var(--font-mono), monospace;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 980px) {
+  .app-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -10,3 +10,15 @@ __pycache__/
 .env
 .application/
 *.zip
+/package-lock.json
+web/node_modules/
+web/.next/
+python-sidecar/.venv/
+src-tauri/target/
+src-tauri/gen/
+web/node_modules/
+web/.next/
+src-tauri/target/
+python-sidecar/.venv/
+python-sidecar/.pytest_cache/
+python-sidecar/.ruff_cache/
