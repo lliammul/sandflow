@@ -11,27 +11,46 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+pub mod customise;
+pub mod util;
+
+pub const CUSTOMISE_LOCKED_PATHS: &[&str] = &[
+    "src-tauri/**",
+    "codex-runner/**",
+    "python-sidecar/src/sandflow_sidecar/contract.py",
+    ".git/**",
+    ".env",
+    ".env.*",
+    "*secret*",
+    "*.key",
+    "*.pem",
+    "previews/**",
+    ".context/**",
+    ".conductor/**",
+];
+
 #[derive(Default)]
-struct DesktopState {
-    runtime: RuntimeState,
+pub struct DesktopState {
+    pub runtime: RuntimeState,
+    pub preview: Option<customise::PreviewSession>,
 }
 
 #[derive(Default)]
-struct RuntimeState {
-    repo_path: Option<PathBuf>,
-    runtime_root: Option<PathBuf>,
-    sidecar_port: Option<u16>,
-    sidecar_child: Option<Child>,
-    cached_api_key: Option<String>,
-    swap_in_progress: bool,
+pub struct RuntimeState {
+    pub repo_path: Option<PathBuf>,
+    pub runtime_root: Option<PathBuf>,
+    pub sidecar_port: Option<u16>,
+    pub sidecar_child: Option<Child>,
+    pub cached_api_key: Option<String>,
+    pub swap_in_progress: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-struct RuntimeConfig {
-    open_ai_api_key: String,
-    open_ai_base_url: String,
-    sandbox_model: String,
+pub struct RuntimeConfig {
+    pub open_ai_api_key: String,
+    pub open_ai_base_url: String,
+    pub sandbox_model: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -79,10 +98,54 @@ fn save_artifact_to_downloads(
 }
 
 #[tauri::command]
+fn get_customise_status(
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<Option<customise::CustomiseStatus>, String> {
+    customise::get_customise_status_impl(&state).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn start_customise_run(
+    app: AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+    payload: customise::StartCustomisePayload,
+) -> Result<customise::CustomiseStatus, String> {
+    customise::start_customise_run_impl(&app, &state, payload).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn approve_customise_run(
+    app: AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<customise::CustomiseStatus, String> {
+    customise::approve_customise_run_impl(&app, &state).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn discard_customise_run(
+    app: AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<(), String> {
+    customise::discard_customise_run_impl(&app, &state).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn reveal_path_in_finder(path: String) -> Result<(), String> {
     Command::new("open")
         .arg("-R")
         .arg(path)
+        .status()
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    if !(url.starts_with("http://127.0.0.1:") || url.starts_with("http://localhost:")) {
+        return Err("only local preview URLs may be opened".into());
+    }
+    Command::new("open")
+        .arg(url)
         .status()
         .map_err(|error| error.to_string())?;
     Ok(())
@@ -215,7 +278,7 @@ fn save_runtime_config(runtime_root: &Path, payload: &BootstrapPayload) -> Resul
     Ok(())
 }
 
-fn load_runtime_config(runtime_root: &Path) -> Result<RuntimeConfig> {
+pub fn load_runtime_config(runtime_root: &Path) -> Result<RuntimeConfig> {
     let config_path = runtime_root.join("config.json");
     if !config_path.exists() {
         return Ok(RuntimeConfig::default());
@@ -329,7 +392,7 @@ fn restart_sidecar(
     )
 }
 
-fn hot_swap_sidecar(
+pub fn hot_swap_sidecar(
     app: &AppHandle,
     state: &State<'_, Mutex<DesktopState>>,
     repo_path: &Path,
@@ -732,7 +795,12 @@ pub fn run() {
             bootstrap_runtime,
             get_runtime_status,
             reveal_path_in_finder,
+            open_external,
             save_artifact_to_downloads,
+            get_customise_status,
+            start_customise_run,
+            approve_customise_run,
+            discard_customise_run,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

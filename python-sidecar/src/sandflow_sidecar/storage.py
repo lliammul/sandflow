@@ -7,12 +7,9 @@ import shutil
 from pathlib import Path
 
 from .models import (
-    ArtifactOutputDefinition,
-    InputFieldDefinition,
-    OutputFieldDefinition,
-    WorkflowDefinition,
     WorkflowRunRecord,
 )
+from .workflow_templates import starter_workflow_definition
 
 ROOT_DIR = Path(os.getenv("SANDFLOW_APP_STORAGE", ".application"))
 WORKFLOWS_DIR = ROOT_DIR / "workflows"
@@ -102,58 +99,7 @@ def _seed_starter_workflow_if_needed() -> None:
     if any(WORKFLOWS_DIR.glob("*.json")):
         return
 
-    starter = WorkflowDefinition(
-        id="review-document",
-        name="Review Document",
-        description="Review an uploaded document and produce structured findings plus an optional file artifact.",
-        is_active=True,
-        prompt=(
-            "Review the provided document and produce a concise executive summary. Return a JSON "
-            "array of findings where each item includes severity, title, evidence, and recommendation. "
-            "If useful, you may also generate a supporting report file."
-        ),
-        input_fields=[
-            InputFieldDefinition(
-                id="document",
-                label="Document",
-                type="file",
-                required=True,
-                help_text="Upload a PDF, DOCX, TXT, or Markdown file.",
-            ),
-            InputFieldDefinition(
-                id="review_focus",
-                label="Review Focus",
-                type="long_text",
-                required=False,
-                help_text="Optional instructions or concerns to emphasize.",
-            ),
-        ],
-        output_fields=[
-            OutputFieldDefinition(
-                id="summary",
-                label="Summary",
-                type="markdown",
-                required=True,
-                help_text="A short executive summary.",
-            ),
-            OutputFieldDefinition(
-                id="findings",
-                label="Findings",
-                type="json",
-                required=True,
-                help_text="Structured findings with severity, evidence, and recommendations.",
-            ),
-        ],
-        artifact_outputs=[
-            ArtifactOutputDefinition(
-                id="report_file",
-                label="Report File",
-                format="docx",
-                required=False,
-                help_text="Optional generated report or export.",
-            )
-        ],
-    )
+    starter = starter_workflow_definition()
     workflow_file_path(starter.id).write_text(
         starter.model_dump_json(indent=2),
         encoding="utf-8",

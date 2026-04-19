@@ -18,6 +18,7 @@ from sandflow_sidecar.models import (
 )
 from sandflow_sidecar.storage import ensure_storage, load_run_records, run_file_path, workflow_file_path
 from sandflow_sidecar.workflow_registry import delete_workflow, get_workflow, save_workflow
+from sandflow_sidecar.workflow_templates import starter_workflow_definition
 
 
 def test_workflow_definition_rejects_duplicate_input_ids():
@@ -95,6 +96,18 @@ def test_save_and_load_workflow_roundtrip():
     assert workflow_file_path(workflow.id).exists()
     delete_workflow(workflow.id)
     assert not workflow_file_path(workflow.id).exists()
+
+
+def test_ensure_storage_seeds_canonical_starter_workflow(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+
+    ensure_storage()
+
+    starter = starter_workflow_definition()
+    persisted = get_workflow(starter.id)
+    assert persisted.model_dump(exclude={"created_at", "updated_at"}) == starter.model_dump(
+        exclude={"created_at", "updated_at"}
+    )
 
 
 def test_workflow_run_record_defaults_progress_timeline_for_legacy_json():

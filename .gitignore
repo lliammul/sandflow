@@ -11,8 +11,10 @@ __pycache__/
 .application/
 *.zip
 /package-lock.json
+node_modules/
 web/node_modules/
 web/.next/
+web/out/
 python-sidecar/.venv/
 src-tauri/target/
 src-tauri/gen/

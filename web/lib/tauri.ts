@@ -5,6 +5,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
   BootstrapPayload,
+  CustomiseLogEntry,
+  CustomiseStatus,
   RuntimeStatus,
   SidecarChangedEvent,
 } from "./types";
@@ -35,7 +37,47 @@ export const tauriClient = {
   async revealPathInFinder(path: string) {
     return invoke<void>("reveal_path_in_finder", { path });
   },
+  async openExternal(url: string) {
+    return invoke<void>("open_external", { url });
+  },
+  async getCustomiseStatus() {
+    if (!isTauriRuntime()) {
+      return null;
+    }
+    return invoke<CustomiseStatus | null>("get_customise_status");
+  },
+  async startCustomiseRun(prompt: string) {
+    return invoke<CustomiseStatus>("start_customise_run", { payload: { prompt } });
+  },
+  async approveCustomiseRun() {
+    return invoke<CustomiseStatus>("approve_customise_run");
+  },
+  async discardCustomiseRun() {
+    return invoke<void>("discard_customise_run");
+  },
 };
+
+export async function listenToCustomiseRunUpdated(
+  onEvent: (status: CustomiseStatus | { cleared: true }) => void,
+): Promise<UnlistenFn> {
+  if (!isTauriRuntime()) {
+    return () => {};
+  }
+  return listen<CustomiseStatus | { cleared: true }>("customise-run-updated", (event) => {
+    onEvent(event.payload);
+  });
+}
+
+export async function listenToCustomiseLog(
+  onEvent: (entry: CustomiseLogEntry) => void,
+): Promise<UnlistenFn> {
+  if (!isTauriRuntime()) {
+    return () => {};
+  }
+  return listen<CustomiseLogEntry>("customise-log", (event) => {
+    onEvent(event.payload);
+  });
+}
 
 export async function listenToSidecarChanged(
   onEvent: (event: SidecarChangedEvent) => void,

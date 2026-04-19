@@ -8,6 +8,7 @@ from pathlib import Path
 import uvicorn
 
 from .contract import create_app
+from .storage import ensure_storage
 
 
 def main() -> None:
@@ -20,6 +21,7 @@ def main() -> None:
     if args.port_file is not None:
         args.port_file.parent.mkdir(parents=True, exist_ok=True)
         args.port_file.write_text(str(port), encoding="utf-8")
+    ensure_storage()
     print(f"PORT={port}", file=sys.stderr, flush=True)
     uvicorn.run(create_app(), host="127.0.0.1", port=port, log_level="info")
 

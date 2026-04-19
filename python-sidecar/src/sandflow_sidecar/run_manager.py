@@ -25,6 +25,16 @@ class RunManager:
     def __init__(self) -> None:
         self._runs: dict[str, ManagedRun] = {}
         self._lock = asyncio.Lock()
+        self._paused = False
+
+    def is_paused(self) -> bool:
+        return self._paused
+
+    def pause(self) -> None:
+        self._paused = True
+
+    def resume(self) -> None:
+        self._paused = False
 
     async def start_run(
         self,
@@ -34,6 +44,10 @@ class RunManager:
         *,
         debug: bool = False,
     ) -> str:
+        if self._paused:
+            raise RuntimeError(
+                "Sidecar is paused for a customise apply. Try again in a moment."
+            )
         run_id = f"run_{uuid4().hex[:12]}"
         managed = ManagedRun(run_id=run_id)
         async with self._lock:
@@ -42,6 +56,9 @@ class RunManager:
             self._run(managed, workflow_id, text_inputs, file_inputs, debug=debug)
         )
         return run_id
+
+    def list_active(self) -> list[str]:
+        return [run_id for run_id, managed in self._runs.items() if not managed.done]
 
     async def stream_events(self, run_id: str) -> AsyncIterator[dict[str, object]]:
         managed = self._runs.get(run_id)

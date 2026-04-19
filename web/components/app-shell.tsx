@@ -10,6 +10,7 @@ import { SetupGuard } from "./setup-guard";
 const TABS = [
   { href: "/", label: "User" },
   { href: "/builder", label: "Builder" },
+  { href: "/customise", label: "Customise" },
 ];
 
 export function AppShell({
@@ -18,7 +19,13 @@ export function AppShell({
   children,
 }: PropsWithChildren<{ sidebar?: React.ReactNode; banner?: React.ReactNode }>) {
   const pathname = usePathname();
-  const consoleLabel = pathname === "/builder" ? "Builder Console" : "Workflow Console";
+  const consoleLabel =
+    pathname === "/builder"
+      ? "Builder Console"
+      : pathname === "/customise"
+        ? "Customise Console"
+        : "Workflow Console";
+  const previewRunId = process.env.NEXT_PUBLIC_SANDFLOW_PREVIEW_RUN_ID;
 
   return (
     <div className="min-h-screen">
@@ -38,6 +45,11 @@ export function AppShell({
           <div className="ml-auto monoline">{consoleLabel}</div>
         </div>
       </header>
+      {previewRunId ? (
+        <Banner tone="accent">
+          Preview workspace — run <span className="font-mono">{previewRunId}</span>. Changes here do not affect the live app until you approve in the Customise tab.
+        </Banner>
+      ) : null}
       {banner}
       <div className="mx-auto max-w-[1480px] px-6 py-6">
         <div

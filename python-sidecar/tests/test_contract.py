@@ -107,3 +107,44 @@ def test_events_endpoint_streams_manager_output(monkeypatch, tmp_path):
     assert "event: progress" in body
     assert '"title":"Starting"' in body
     assert "event: terminal" in body
+
+
+def test_run_endpoint_stages_uploaded_files(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SANDFLOW_APP_STORAGE", str(tmp_path / ".application"))
+    app = create_app()
+
+    workflow = WorkflowDefinition(
+        id="upload-workflow",
+        name="Upload Workflow",
+        prompt="Prompt",
+        input_fields=[InputFieldDefinition(id="document", label="Document", type="file", required=True)],
+        output_fields=[OutputFieldDefinition(id="summary", label="Summary", type="text")],
+    )
+    save_workflow(workflow)
+
+    captured: dict[str, object] = {}
+
+    async def fake_start_run(workflow_id: str, text_inputs: dict[str, str], file_inputs: dict[str, object], *, debug: bool = False):
+        captured["workflow_id"] = workflow_id
+        captured["text_inputs"] = text_inputs
+        captured["file_inputs"] = file_inputs
+        captured["debug"] = debug
+        return "run_uploaded"
+
+    app.state.run_manager.start_run = fake_start_run
+    client = TestClient(app)
+
+    response = client.post(
+        "/workflows/upload-workflow/run",
+        data={"debug": "true"},
+        files={"file.document": ("test.txt", b"hello world", "text/plain")},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"run_id": "run_uploaded"}
+    assert captured["workflow_id"] == "upload-workflow"
+    assert captured["debug"] is True
+    uploaded = captured["file_inputs"]["document"]
+    assert uploaded.exists()
+    assert uploaded.read_text(encoding="utf-8") == "hello world"

@@ -160,3 +160,32 @@ export interface SidecarChangedEvent {
   newPort: number;
   baseUrl: string;
 }
+
+export type CustomiseState =
+  | "cloning"
+  | "generating"
+  | "ready_for_review"
+  | "applying"
+  | "applied"
+  | "failed"
+  | "cancelled";
+
+export interface CustomiseLogEntry {
+  ts: number;
+  level: string;
+  message: string;
+}
+
+export interface CustomiseStatus {
+  runId: string;
+  prompt: string;
+  previewPath: string;
+  previewSidecarUrl: string | null;
+  previewWebUrl: string | null;
+  state: CustomiseState;
+  startedAt: number;
+  log: CustomiseLogEntry[];
+  changedPaths: string[];
+  lockedViolations: string[];
+  error: string | null;
+}

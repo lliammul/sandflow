@@ -4,9 +4,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi import FastAPI, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from .models import WorkflowDefinition, WorkflowRegistryEntry, WorkflowRunRecord
 from .run_manager import RunManager
@@ -39,7 +40,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Sandflow Sidecar", version=APP_VERSION, lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://127.0.0.1:*", "http://localhost:*", "tauri://localhost"],
+        allow_origin_regex=r"^(https?://(127\.0\.0\.1|localhost)(:\d+)?|tauri://localhost)$",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -49,6 +50,38 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok", "version": APP_VERSION}
+
+    @app.get("/ready")
+    async def ready() -> dict[str, Any]:
+        checks: dict[str, bool] = {}
+        try:
+            list_workflow_entries(include_inactive=True)
+            checks["registry"] = True
+        except Exception:
+            checks["registry"] = False
+        try:
+            staging_upload_dir()
+            checks["storage"] = True
+        except Exception:
+            checks["storage"] = False
+        checks["run_manager"] = app.state.run_manager is not None
+        if not all(checks.values()):
+            return JSONResponse({"status": "not_ready", "checks": checks}, status_code=503)
+        return {"status": "ready", "version": APP_VERSION, "checks": checks}
+
+    @app.get("/runs/active")
+    async def active_runs() -> dict[str, list[str]]:
+        return {"run_ids": run_manager.list_active()}
+
+    @app.post("/runs/pause")
+    async def pause_runs() -> dict[str, bool]:
+        run_manager.pause()
+        return {"paused": True}
+
+    @app.post("/runs/resume")
+    async def resume_runs() -> dict[str, bool]:
+        run_manager.resume()
+        return {"paused": False}
 
     @app.get("/workflow-entries", response_model=list[WorkflowRegistryEntry])
     async def workflow_entries(include_inactive: bool = True) -> list[WorkflowRegistryEntry]:
@@ -101,16 +134,19 @@ def create_app() -> FastAPI:
             if key.startswith("text."):
                 text_inputs[key.removeprefix("text.")] = str(value)
                 continue
-            if key.startswith("file.") and isinstance(value, UploadFile):
+            if key.startswith("file.") and isinstance(value, StarletteUploadFile):
                 staged = await _stage_upload(key.removeprefix("file."), value)
                 file_inputs[key.removeprefix("file.")] = staged
 
-        run_id = await run_manager.start_run(
-            workflow_id,
-            text_inputs,
-            file_inputs,
-            debug=debug,
-        )
+        try:
+            run_id = await run_manager.start_run(
+                workflow_id,
+                text_inputs,
+                file_inputs,
+                debug=debug,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         return JSONResponse({"run_id": run_id})
 
     @app.get("/runs/{run_id}/events")
