@@ -5,10 +5,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
   BootstrapPayload,
-  CustomiseHistoryEntry,
-  CustomiseLogEvent,
-  CustomisePreview,
   RuntimeStatus,
+  SidecarChangedEvent,
 } from "./types";
 
 export function isTauriRuntime() {
@@ -31,34 +29,27 @@ export const tauriClient = {
     runtimeStatusCache = status;
     return status;
   },
-  async openRepoInEditor() {
-    return invoke<void>("open_repo_in_editor");
+  async saveArtifactToDownloads(storedPath: string, filename: string) {
+    return invoke<string>("save_artifact_to_downloads", { storedPath, filename });
   },
-  async startCustomiseRun(prompt: string) {
-    return invoke<string>("start_customise_run", { prompt });
-  },
-  async getCustomisePreview(runId: string) {
-    return invoke<CustomisePreview>("get_customise_preview", { runId });
-  },
-  async applyCustomiseRun(runId: string) {
-    return invoke<CustomisePreview>("apply_customise_run", { runId });
-  },
-  async discardCustomiseRun(runId: string) {
-    return invoke<void>("discard_customise_run", { runId });
-  },
-  async revertCustomCommit(commitSha: string) {
-    return invoke<void>("revert_custom_commit", { commitSha });
-  },
-  async resetCustomisations() {
-    return invoke<void>("reset_customisations");
-  },
-  async getCustomiseHistory() {
-    return invoke<CustomiseHistoryEntry[]>("get_customise_history");
-  },
-  async listenToCustomiseLogs(onEvent: (event: CustomiseLogEvent) => void): Promise<UnlistenFn> {
-    return listen<CustomiseLogEvent>("customise-log", (event) => onEvent(event.payload));
+  async revealPathInFinder(path: string) {
+    return invoke<void>("reveal_path_in_finder", { path });
   },
 };
+
+export async function listenToSidecarChanged(
+  onEvent: (event: SidecarChangedEvent) => void,
+): Promise<UnlistenFn> {
+  if (!isTauriRuntime()) {
+    return () => {};
+  }
+  return listen<SidecarChangedEvent>("sidecar-changed", (event) => {
+    runtimeStatusCache = runtimeStatusCache
+      ? { ...runtimeStatusCache, sidecarBaseUrl: event.payload.baseUrl, sidecarPort: event.payload.newPort }
+      : runtimeStatusCache;
+    onEvent(event.payload);
+  });
+}
 
 export function getCachedRuntimeStatus() {
   return runtimeStatusCache;

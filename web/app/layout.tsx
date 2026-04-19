@@ -17,7 +17,7 @@ const plexMono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: "Sandflow Desktop",
-  description: "Desktop workflow builder and sandbox runner with local customisation.",
+  description: "Desktop workflow builder and sandbox runner.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

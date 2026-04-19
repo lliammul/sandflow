@@ -142,6 +142,7 @@ export interface RuntimeStatus {
   needsSetup: boolean;
   dockerAvailable: boolean;
   config: {
+    openAiApiKey: string;
     openAiBaseUrl: string;
     sandboxModel: string;
   };
@@ -153,24 +154,9 @@ export interface BootstrapPayload {
   sandboxModel: string;
 }
 
-export interface CustomiseLogEvent {
-  runId: string;
-  phase: string;
-  message: string;
-}
-
-export interface CustomisePreview {
-  runId: string;
-  prompt: string;
-  baseCommit: string;
-  diff: string;
-  changedPaths: string[];
-  allowed: boolean;
-  error: string | null;
-}
-
-export interface CustomiseHistoryEntry {
-  sha: string;
-  subject: string;
-  committedAt: string;
+export interface SidecarChangedEvent {
+  swapId: number;
+  oldPort: number | null;
+  newPort: number;
+  baseUrl: string;
 }

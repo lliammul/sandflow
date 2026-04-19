@@ -1,7 +1,6 @@
-use std::collections::HashMap;
 use std::fs;
-use std::io::{BufRead, BufReader};
-use std::net::TcpListener;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::Mutex;
@@ -9,12 +8,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
-use keyring::Entry;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
-
-const KEYRING_SERVICE: &str = "com.sandflow.desktop";
-const KEYRING_USER: &str = "openai_api_key";
 
 #[derive(Default)]
 struct DesktopState {
@@ -27,26 +22,14 @@ struct RuntimeState {
     runtime_root: Option<PathBuf>,
     sidecar_port: Option<u16>,
     sidecar_child: Option<Child>,
-    #[allow(dead_code)]
-    web_child: Option<Child>,
-    previews: HashMap<String, PreviewRun>,
-}
-
-#[derive(Clone)]
-struct PreviewRun {
-    run_id: String,
-    prompt: String,
-    base_commit: String,
-    diff: String,
-    changed_paths: Vec<String>,
-    allowed: bool,
-    error: Option<String>,
-    worktree_path: PathBuf,
+    cached_api_key: Option<String>,
+    swap_in_progress: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct RuntimeConfig {
+    open_ai_api_key: String,
     open_ai_base_url: String,
     sandbox_model: String,
 }
@@ -71,34 +54,6 @@ struct BootstrapPayload {
     sandbox_model: String,
 }
 
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CustomiseLogEvent {
-    run_id: String,
-    phase: String,
-    message: String,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CustomisePreview {
-    run_id: String,
-    prompt: String,
-    base_commit: String,
-    diff: String,
-    changed_paths: Vec<String>,
-    allowed: bool,
-    error: Option<String>,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CustomiseHistoryEntry {
-    sha: String,
-    subject: String,
-    committed_at: String,
-}
-
 #[tauri::command]
 fn get_runtime_status(app: AppHandle, state: State<'_, Mutex<DesktopState>>) -> Result<RuntimeStatus, String> {
     load_runtime_status(&app, &state).map_err(|error| error.to_string())
@@ -114,91 +69,23 @@ fn bootstrap_runtime(
 }
 
 #[tauri::command]
-fn open_repo_in_editor(app: AppHandle, state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
-    let repo_path = {
-        let guard = state.lock().map_err(|_| "Runtime state is unavailable.".to_string())?;
-        guard
-            .runtime
-            .repo_path
-            .clone()
-            .ok_or_else(|| "Runtime repo is not bootstrapped yet.".to_string())?
-    };
+fn save_artifact_to_downloads(
+    app: AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+    stored_path: String,
+    filename: String,
+) -> Result<String, String> {
+    save_artifact_to_downloads_impl(&app, &state, &stored_path, &filename).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn reveal_path_in_finder(path: String) -> Result<(), String> {
     Command::new("open")
-        .arg(repo_path)
+        .arg("-R")
+        .arg(path)
         .status()
         .map_err(|error| error.to_string())?;
-    let _ = app.emit(
-        "customise-log",
-        CustomiseLogEvent {
-            run_id: "system".into(),
-            phase: "editor".into(),
-            message: "Opened the runtime repo in the default editor.".into(),
-        },
-    );
     Ok(())
-}
-
-#[tauri::command]
-fn start_customise_run(
-    app: AppHandle,
-    state: State<'_, Mutex<DesktopState>>,
-    prompt: String,
-) -> Result<String, String> {
-    start_customise_run_impl(&app, &state, prompt).map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-fn get_customise_preview(
-    state: State<'_, Mutex<DesktopState>>,
-    run_id: String,
-) -> Result<CustomisePreview, String> {
-    let guard = state.lock().map_err(|_| "Runtime state is unavailable.".to_string())?;
-    let preview = guard
-        .runtime
-        .previews
-        .get(&run_id)
-        .cloned()
-        .ok_or_else(|| "Customise preview not found.".to_string())?;
-    Ok(preview.into())
-}
-
-#[tauri::command]
-fn apply_customise_run(
-    app: AppHandle,
-    state: State<'_, Mutex<DesktopState>>,
-    run_id: String,
-) -> Result<CustomisePreview, String> {
-    apply_customise_run_impl(&app, &state, &run_id).map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-fn discard_customise_run(
-    app: AppHandle,
-    state: State<'_, Mutex<DesktopState>>,
-    run_id: String,
-) -> Result<(), String> {
-    discard_customise_run_impl(&app, &state, &run_id).map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-fn revert_custom_commit(
-    app: AppHandle,
-    state: State<'_, Mutex<DesktopState>>,
-    commit_sha: String,
-) -> Result<(), String> {
-    revert_custom_commit_impl(&app, &state, &commit_sha).map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-fn reset_customisations(app: AppHandle, state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
-    reset_customisations_impl(&app, &state).map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-fn get_customise_history(
-    state: State<'_, Mutex<DesktopState>>,
-) -> Result<Vec<CustomiseHistoryEntry>, String> {
-    get_customise_history_impl(&state).map_err(|error| error.to_string())
 }
 
 fn bootstrap_runtime_impl(
@@ -212,14 +99,15 @@ fn bootstrap_runtime_impl(
         .context("Failed to determine the app-data directory.")?;
     let runtime_root = app_data_dir.join("runtime");
     let logs_root = app_data_dir.join("logs");
-    let customise_root = app_data_dir.join("customise");
     let repo_path = app_data_dir.join("repo");
     fs::create_dir_all(&runtime_root)?;
     fs::create_dir_all(&logs_root)?;
-    fs::create_dir_all(&customise_root)?;
 
     save_runtime_config(&runtime_root, &payload)?;
-    store_api_key(&payload.open_ai_api_key)?;
+    {
+        let mut guard = state.lock().map_err(|_| anyhow!("Runtime state is unavailable."))?;
+        guard.runtime.cached_api_key = Some(payload.open_ai_api_key.clone());
+    }
 
     if !docker_available() {
         bail!("Docker is not reachable. Start Docker Desktop or OrbStack and try again.");
@@ -227,18 +115,13 @@ fn bootstrap_runtime_impl(
 
     if repo_needs_refresh(&repo_path) {
         if repo_path.exists() {
-            emit_log(app, "bootstrap", "setup", "Existing runtime repo is stale; recreating it from the current seed.");
             fs::remove_dir_all(&repo_path)?;
         }
-        emit_log(app, "bootstrap", "setup", "Cloning the writable seed repo into app-data.");
-        clone_seed_repo(app, &repo_path)?;
+        clone_seed_repo(&repo_path)?;
     }
-    ensure_custom_branch(&repo_path)?;
 
-    emit_log(app, "bootstrap", "install", "Installing Python dependencies with uv.");
     run_checked(repo_path.as_path(), "uv", ["sync", "--project", "python-sidecar"])?;
-    emit_log(app, "bootstrap", "install", "Installing web dependencies with npm.");
-    run_checked(repo_path.as_path(), "npm", ["install", "--prefix", "web"])?;
+    run_checked(repo_path.as_path(), "pnpm", ["install", "--dir", "web"])?;
 
     let sidecar_port = restart_sidecar(app, state, &repo_path, &runtime_root, &payload)?;
 
@@ -248,262 +131,23 @@ fn bootstrap_runtime_impl(
     guard.runtime.sidecar_port = Some(sidecar_port);
     drop(guard);
 
-    build_runtime_status(&repo_path, Some(sidecar_port), load_runtime_config(&runtime_root)?)
-}
-
-fn start_customise_run_impl(
-    app: &AppHandle,
-    state: &State<'_, Mutex<DesktopState>>,
-    prompt: String,
-) -> Result<String> {
-    let (repo_path, runtime_root) = {
+    let has_api_key = {
         let guard = state.lock().map_err(|_| anyhow!("Runtime state is unavailable."))?;
-        (
-            guard
-                .runtime
-                .repo_path
-                .clone()
-                .ok_or_else(|| anyhow!("Runtime repo is not bootstrapped yet."))?,
-            guard
-                .runtime
-                .runtime_root
-                .clone()
-                .ok_or_else(|| anyhow!("Runtime directory is not ready."))?,
-        )
-    };
-
-    let customise_root = runtime_root.parent().unwrap_or(runtime_root.as_path()).join("customise");
-    fs::create_dir_all(&customise_root)?;
-
-    let run_id = format!("customise_{}", unix_timestamp());
-    let base_commit = git_output(&repo_path, ["rev-parse", "HEAD"])?;
-    let worktree_path = customise_root.join(&run_id);
-    emit_log(app, &run_id, "worktree", "Creating a temporary git worktree.");
-    run_checked(
-        repo_path.as_path(),
-        "git",
-        [
-            "-C",
-            repo_path.to_string_lossy().as_ref(),
-            "worktree",
-            "add",
-            "--detach",
-            worktree_path.to_string_lossy().as_ref(),
-            base_commit.as_str(),
-        ],
-    )?;
-
-    emit_log(app, &run_id, "codex", "Running Codex against the temporary worktree.");
-    let config = load_runtime_config(&runtime_root)?;
-    let api_key = load_api_key()?;
-    let command_output = run_codex(app, &run_id, &worktree_path, &prompt, &config, &api_key)?;
-    if !command_output.status.success() {
-        emit_log(app, &run_id, "codex", "Codex exited with a non-zero status.");
-    }
-
-    let changed_paths = git_lines(worktree_path.as_path(), ["diff", "--name-only"])?;
-    let diff = git_output(worktree_path.as_path(), ["diff", "--binary"])?;
-    let denied = changed_paths.iter().any(|path| !path_allowed(path));
-    let preview = PreviewRun {
-        run_id: run_id.clone(),
-        prompt,
-        base_commit,
-        diff,
-        changed_paths,
-        allowed: !denied && command_output.status.success(),
-        error: if denied {
-            Some("Codex touched one or more locked paths. The preview has been blocked.".into())
-        } else if !command_output.status.success() {
-            Some("Codex failed to complete successfully.".into())
-        } else {
-            None
-        },
-        worktree_path,
-    };
-
-    let mut guard = state.lock().map_err(|_| anyhow!("Runtime state is unavailable."))?;
-    guard.runtime.previews.insert(run_id.clone(), preview);
-    Ok(run_id)
-}
-
-fn apply_customise_run_impl(
-    app: &AppHandle,
-    state: &State<'_, Mutex<DesktopState>>,
-    run_id: &str,
-) -> Result<CustomisePreview> {
-    let (repo_path, runtime_root, preview) = {
-        let guard = state.lock().map_err(|_| anyhow!("Runtime state is unavailable."))?;
-        let preview = guard
+        guard
             .runtime
-            .previews
-            .get(run_id)
-            .cloned()
-            .ok_or_else(|| anyhow!("Customise preview not found."))?;
-        (
-            guard
-                .runtime
-                .repo_path
-                .clone()
-                .ok_or_else(|| anyhow!("Runtime repo is not bootstrapped yet."))?,
-            guard
-                .runtime
-                .runtime_root
-                .clone()
-                .ok_or_else(|| anyhow!("Runtime directory is not ready."))?,
-            preview,
-        )
+            .cached_api_key
+            .as_ref()
+            .map(|value| !value.is_empty())
+            .unwrap_or(false)
+            || !load_runtime_config(&runtime_root)?.open_ai_api_key.is_empty()
     };
 
-    if !preview.allowed {
-        bail!(preview.error.unwrap_or_else(|| "This preview is blocked and cannot be applied.".into()));
-    }
-    let current_head = git_output(&repo_path, ["rev-parse", "HEAD"])?;
-    if current_head != preview.base_commit {
-        bail!("The live repo moved since the preview was created. Generate a fresh preview.");
-    }
-
-    emit_log(app, run_id, "apply", "Applying the approved patch to the live repo.");
-    let patch_path = runtime_root.join(format!("{run_id}.patch"));
-    fs::write(&patch_path, &preview.diff)?;
-    if let Err(error) = run_checked(
-        repo_path.as_path(),
-        "git",
-        [
-            "-C",
-            repo_path.to_string_lossy().as_ref(),
-            "apply",
-            "--3way",
-            patch_path.to_string_lossy().as_ref(),
-        ],
-    ) {
-        cleanup_preview_worktree(&repo_path, &preview.worktree_path).ok();
-        bail!(error);
-    }
-
-    if preview.changed_paths.iter().any(|path| path == "python-sidecar/pyproject.toml") {
-        emit_log(app, run_id, "install", "Refreshing Python dependencies with uv.");
-        run_checked(repo_path.as_path(), "uv", ["sync", "--project", "python-sidecar"])?;
-    }
-    if preview.changed_paths.iter().any(|path| path == "web/package.json") {
-        emit_log(app, run_id, "install", "Refreshing web dependencies with npm.");
-        run_checked(repo_path.as_path(), "npm", ["install", "--prefix", "web"])?;
-    }
-    if preview.changed_paths.iter().any(|path| path.starts_with("python-sidecar/")) {
-        emit_log(app, run_id, "restart", "Restarting the Python sidecar.");
-        restart_sidecar_from_state(app, state, &repo_path, &runtime_root)?;
-    }
-    wait_for_health(state)?;
-
-    emit_log(app, run_id, "git", "Creating a custom branch commit.");
-    run_checked(repo_path.as_path(), "git", ["-C", repo_path.to_string_lossy().as_ref(), "add", "-A"])?;
-    let commit_message = truncate_commit_message(&preview.prompt);
-    if let Err(error) = run_checked(
-        repo_path.as_path(),
-        "git",
-        [
-            "-C",
-            repo_path.to_string_lossy().as_ref(),
-            "commit",
-            "-m",
-            commit_message.as_str(),
-        ],
-    ) {
-        emit_log(app, run_id, "revert", "Commit failed; resetting the live repo to the preview base commit.");
-        run_checked(
-            repo_path.as_path(),
-            "git",
-            ["-C", repo_path.to_string_lossy().as_ref(), "reset", "--hard", preview.base_commit.as_str()],
-        )?;
-        return Err(error);
-    }
-
-    cleanup_preview_worktree(&repo_path, &preview.worktree_path)?;
-    let mut guard = state.lock().map_err(|_| anyhow!("Runtime state is unavailable."))?;
-    let preview = guard
-        .runtime
-        .previews
-        .remove(run_id)
-        .ok_or_else(|| anyhow!("Customise preview disappeared before apply finished."))?;
-    Ok(preview.into())
-}
-
-fn discard_customise_run_impl(
-    app: &AppHandle,
-    state: &State<'_, Mutex<DesktopState>>,
-    run_id: &str,
-) -> Result<()> {
-    let (repo_path, worktree_path) = {
-        let mut guard = state.lock().map_err(|_| anyhow!("Runtime state is unavailable."))?;
-        let repo_path = guard
-            .runtime
-            .repo_path
-            .clone()
-            .ok_or_else(|| anyhow!("Runtime repo is not bootstrapped yet."))?;
-        let preview = guard
-            .runtime
-            .previews
-            .remove(run_id)
-            .ok_or_else(|| anyhow!("Customise preview not found."))?;
-        (repo_path, preview.worktree_path)
-    };
-    emit_log(app, run_id, "discard", "Removing the temporary worktree without applying changes.");
-    cleanup_preview_worktree(&repo_path, &worktree_path)
-}
-
-fn revert_custom_commit_impl(
-    app: &AppHandle,
-    state: &State<'_, Mutex<DesktopState>>,
-    commit_sha: &str,
-) -> Result<()> {
-    let (repo_path, runtime_root) = runtime_paths(state)?;
-    emit_log(app, commit_sha, "revert", "Reverting the selected custom commit.");
-    run_checked(
-        repo_path.as_path(),
-        "git",
-        ["-C", repo_path.to_string_lossy().as_ref(), "revert", "--no-edit", commit_sha],
-    )?;
-    restart_sidecar_from_state(app, state, &repo_path, &runtime_root)?;
-    wait_for_health(state)?;
-    Ok(())
-}
-
-fn reset_customisations_impl(app: &AppHandle, state: &State<'_, Mutex<DesktopState>>) -> Result<()> {
-    let (repo_path, runtime_root) = runtime_paths(state)?;
-    emit_log(app, "system", "reset", "Resetting the custom branch back to local main.");
-    run_checked(repo_path.as_path(), "git", ["-C", repo_path.to_string_lossy().as_ref(), "checkout", "custom"])?;
-    run_checked(
-        repo_path.as_path(),
-        "git",
-        ["-C", repo_path.to_string_lossy().as_ref(), "reset", "--hard", "main"],
-    )?;
-    run_checked(repo_path.as_path(), "git", ["-C", repo_path.to_string_lossy().as_ref(), "clean", "-fd"])?;
-    restart_sidecar_from_state(app, state, &repo_path, &runtime_root)?;
-    wait_for_health(state)?;
-    Ok(())
-}
-
-fn get_customise_history_impl(state: &State<'_, Mutex<DesktopState>>) -> Result<Vec<CustomiseHistoryEntry>> {
-    let guard = state.lock().map_err(|_| anyhow!("Runtime state is unavailable."))?;
-    let repo_path = guard
-        .runtime
-        .repo_path
-        .clone()
-        .ok_or_else(|| anyhow!("Runtime repo is not bootstrapped yet."))?;
-    let output = git_output(
+    build_runtime_status(
         &repo_path,
-        ["log", "custom", "--pretty=format:%H\t%s\t%cI", "-n", "30"],
-    )?;
-    Ok(output
-        .lines()
-        .filter_map(|line| {
-            let mut parts = line.splitn(3, '\t');
-            Some(CustomiseHistoryEntry {
-                sha: parts.next()?.to_string(),
-                subject: parts.next()?.to_string(),
-                committed_at: parts.next()?.to_string(),
-            })
-        })
-        .collect())
+        Some(sidecar_port),
+        load_runtime_config(&runtime_root)?,
+        has_api_key,
+    )
 }
 
 fn load_runtime_status(app: &AppHandle, state: &State<'_, Mutex<DesktopState>>) -> Result<RuntimeStatus> {
@@ -513,27 +157,45 @@ fn load_runtime_status(app: &AppHandle, state: &State<'_, Mutex<DesktopState>>) 
     let config = load_runtime_config(&runtime_root).unwrap_or_default();
     let bootstrapped = repo_path.exists();
     let docker = docker_available();
-    let sidecar_port = {
+    let (sidecar_port, has_api_key) = {
         let mut guard = state.lock().map_err(|_| anyhow!("Runtime state is unavailable."))?;
         guard.runtime.repo_path.get_or_insert(repo_path.clone());
         guard.runtime.runtime_root.get_or_insert(runtime_root.clone());
-        guard.runtime.sidecar_port
+        if guard.runtime.cached_api_key.is_none() && !config.open_ai_api_key.is_empty() {
+            guard.runtime.cached_api_key = Some(config.open_ai_api_key.clone());
+        }
+        (
+            guard.runtime.sidecar_port,
+            guard
+                .runtime
+                .cached_api_key
+                .as_ref()
+                .map(|value| !value.is_empty())
+                .unwrap_or(false)
+                || !config.open_ai_api_key.is_empty(),
+        )
     };
-    build_runtime_status(&repo_path, sidecar_port, config).map(|mut status| {
+
+    build_runtime_status(&repo_path, sidecar_port, config, has_api_key).map(|mut status| {
         status.docker_available = docker;
-        status.needs_setup = !bootstrapped || !docker || load_api_key().is_err() || status.config.sandbox_model.is_empty();
+        status.needs_setup = !bootstrapped || !docker || !has_api_key || status.config.sandbox_model.is_empty();
         status
     })
 }
 
-fn build_runtime_status(repo_path: &Path, sidecar_port: Option<u16>, config: RuntimeConfig) -> Result<RuntimeStatus> {
+fn build_runtime_status(
+    repo_path: &Path,
+    sidecar_port: Option<u16>,
+    config: RuntimeConfig,
+    has_api_key: bool,
+) -> Result<RuntimeStatus> {
     let bootstrapped = repo_path.exists();
     Ok(RuntimeStatus {
         bootstrapped,
         repo_path: bootstrapped.then(|| repo_path.display().to_string()),
         sidecar_port,
         sidecar_base_url: sidecar_port.map(|port| format!("http://127.0.0.1:{port}")),
-        needs_setup: !bootstrapped || load_api_key().is_err() || config.sandbox_model.is_empty(),
+        needs_setup: !bootstrapped || !has_api_key || config.sandbox_model.is_empty(),
         docker_available: docker_available(),
         config,
     })
@@ -541,9 +203,11 @@ fn build_runtime_status(repo_path: &Path, sidecar_port: Option<u16>, config: Run
 
 fn save_runtime_config(runtime_root: &Path, payload: &BootstrapPayload) -> Result<()> {
     let config = RuntimeConfig {
+        open_ai_api_key: payload.open_ai_api_key.clone(),
         open_ai_base_url: payload.open_ai_base_url.clone(),
         sandbox_model: payload.sandbox_model.clone(),
     };
+    fs::create_dir_all(runtime_root)?;
     fs::write(
         runtime_root.join("config.json"),
         serde_json::to_vec_pretty(&config)?,
@@ -559,42 +223,22 @@ fn load_runtime_config(runtime_root: &Path) -> Result<RuntimeConfig> {
     Ok(serde_json::from_slice(&fs::read(config_path)?)?)
 }
 
-fn store_api_key(value: &str) -> Result<()> {
-    let entry = Entry::new(KEYRING_SERVICE, KEYRING_USER)?;
-    entry.set_password(value)?;
-    Ok(())
-}
-
-fn load_api_key() -> Result<String> {
-    let entry = Entry::new(KEYRING_SERVICE, KEYRING_USER)?;
-    Ok(entry.get_password()?)
-}
-
-fn clone_seed_repo(app: &AppHandle, repo_path: &Path) -> Result<()> {
-    let source = std::env::var("SANDFLOW_SEED_REPO")
-        .ok()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .map(Path::to_path_buf)
-                .expect("src-tauri must live inside the repo root")
-        });
+fn clone_seed_repo(repo_path: &Path) -> Result<()> {
+    let source = source_repo_root();
     if !source.join(".git").exists() {
         bail!("Seed repo source `{}` is not a git repository.", source.display());
     }
-    emit_log(
-        app,
-        "bootstrap",
-        "setup",
-        &format!("Copying the current working tree from `{}` into app-data.", source.display()),
-    );
+    if let Some(parent) = repo_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     run_checked(
         source.as_path(),
         "rsync",
         [
             "-a",
             "--delete",
+            "--exclude",
+            ".git",
             "--exclude",
             ".git/",
             "--exclude",
@@ -619,24 +263,32 @@ fn clone_seed_repo(app: &AppHandle, repo_path: &Path) -> Result<()> {
             repo_path.to_string_lossy().as_ref(),
         ],
     )?;
+    let copied_git_file = repo_path.join(".git");
+    if copied_git_file.exists() {
+        if copied_git_file.is_dir() {
+            fs::remove_dir_all(&copied_git_file)?;
+        } else {
+            fs::remove_file(&copied_git_file)?;
+        }
+    }
     run_checked(repo_path, "git", ["init", "-b", "main"])?;
-    run_checked(
-        repo_path,
-        "git",
-        ["config", "user.email", "sandflow@local.invalid"],
-    )?;
-    run_checked(
-        repo_path,
-        "git",
-        ["config", "user.name", "Sandflow Desktop"],
-    )?;
+    run_checked(repo_path, "git", ["config", "user.email", "sandflow@local.invalid"])?;
+    run_checked(repo_path, "git", ["config", "user.name", "Sandflow Desktop"])?;
     run_checked(repo_path, "git", ["add", "-A"])?;
-    run_checked(
-        repo_path,
-        "git",
-        ["commit", "-m", "Initial Sandflow desktop seed"],
-    )?;
+    run_checked(repo_path, "git", ["commit", "-m", "Initial Sandflow desktop runtime"])?;
     Ok(())
+}
+
+fn source_repo_root() -> PathBuf {
+    std::env::var("SANDFLOW_SEED_REPO")
+        .ok()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .map(Path::to_path_buf)
+                .expect("src-tauri must live inside the repo root")
+        })
 }
 
 fn repo_needs_refresh(repo_path: &Path) -> bool {
@@ -655,29 +307,6 @@ fn repo_needs_refresh(repo_path: &Path) -> bool {
     false
 }
 
-fn ensure_custom_branch(repo_path: &Path) -> Result<()> {
-    run_checked(repo_path, "git", ["-C", repo_path.to_string_lossy().as_ref(), "checkout", "-B", "main"])?;
-    let _ = run_checked(repo_path, "git", ["-C", repo_path.to_string_lossy().as_ref(), "branch", "-D", "custom"]);
-    run_checked(repo_path, "git", ["-C", repo_path.to_string_lossy().as_ref(), "checkout", "-B", "custom", "main"])?;
-    let _ = run_checked(
-        repo_path,
-        "git",
-        [
-            "-C",
-            repo_path.to_string_lossy().as_ref(),
-            "config",
-            "user.email",
-            "sandflow@local.invalid",
-        ],
-    );
-    let _ = run_checked(
-        repo_path,
-        "git",
-        ["-C", repo_path.to_string_lossy().as_ref(), "config", "user.name", "Sandflow Desktop"],
-    );
-    Ok(())
-}
-
 fn restart_sidecar(
     app: &AppHandle,
     state: &State<'_, Mutex<DesktopState>>,
@@ -686,45 +315,124 @@ fn restart_sidecar(
     payload: &BootstrapPayload,
 ) -> Result<u16> {
     let config = RuntimeConfig {
+        open_ai_api_key: payload.open_ai_api_key.clone(),
         open_ai_base_url: payload.open_ai_base_url.clone(),
         sandbox_model: payload.sandbox_model.clone(),
     };
-    restart_sidecar_with_config(app, state, repo_path, runtime_root, &config)
+    hot_swap_sidecar_with_config(
+        app,
+        state,
+        repo_path,
+        runtime_root,
+        &config,
+        Some(payload.open_ai_api_key.as_str()),
+    )
 }
 
-fn restart_sidecar_from_state(
+fn hot_swap_sidecar(
     app: &AppHandle,
     state: &State<'_, Mutex<DesktopState>>,
     repo_path: &Path,
     runtime_root: &Path,
 ) -> Result<u16> {
     let config = load_runtime_config(runtime_root)?;
-    restart_sidecar_with_config(app, state, repo_path, runtime_root, &config)
+    hot_swap_sidecar_with_config(app, state, repo_path, runtime_root, &config, None)
 }
 
-fn restart_sidecar_with_config(
+fn hot_swap_sidecar_with_config(
     app: &AppHandle,
     state: &State<'_, Mutex<DesktopState>>,
     repo_path: &Path,
     runtime_root: &Path,
     config: &RuntimeConfig,
+    api_key_override: Option<&str>,
 ) -> Result<u16> {
-    let port = pick_port()?;
-    let port_file = runtime_root.join("sidecar-port.txt");
-    let log_path = runtime_root.parent().unwrap_or(runtime_root).join("logs/sidecar.log");
-    let api_key = load_api_key()?;
+    let api_key = resolve_api_key(state, config, api_key_override)?;
 
     {
         let mut guard = state.lock().map_err(|_| anyhow!("Runtime state is unavailable."))?;
-        if let Some(mut child) = guard.runtime.sidecar_child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
+        if guard.runtime.swap_in_progress {
+            bail!("A sidecar swap is already in progress; try again in a moment.");
         }
+        guard.runtime.swap_in_progress = true;
     }
 
+    let result = hot_swap_sidecar_inner(app, state, repo_path, runtime_root, config, &api_key);
+
+    {
+        let mut guard = state.lock().map_err(|_| anyhow!("Runtime state is unavailable."))?;
+        guard.runtime.swap_in_progress = false;
+    }
+
+    result
+}
+
+fn hot_swap_sidecar_inner(
+    app: &AppHandle,
+    state: &State<'_, Mutex<DesktopState>>,
+    repo_path: &Path,
+    runtime_root: &Path,
+    config: &RuntimeConfig,
+    api_key: &str,
+) -> Result<u16> {
+    let (new_child, new_port) = spawn_sidecar_child(repo_path, runtime_root, config, api_key)?;
+    let guard = ChildGuard::new(new_child);
+    wait_for_ready(new_port, Duration::from_secs(30))?;
+    let new_child = guard.defuse();
+
+    let (old_child, old_port) = {
+        let mut state_guard = state.lock().map_err(|_| anyhow!("Runtime state is unavailable."))?;
+        let old_child = state_guard.runtime.sidecar_child.take();
+        let old_port = state_guard.runtime.sidecar_port;
+        state_guard.runtime.sidecar_child = Some(new_child);
+        state_guard.runtime.sidecar_port = Some(new_port);
+        (old_child, old_port)
+    };
+
+    emit_sidecar_changed(app, old_port, new_port);
+
+    if let Some(old_child) = old_child {
+        drain_old_sidecar(old_child, old_port);
+    }
+
+    Ok(new_port)
+}
+
+fn resolve_api_key(
+    state: &State<'_, Mutex<DesktopState>>,
+    config: &RuntimeConfig,
+    api_key_override: Option<&str>,
+) -> Result<String> {
+    if let Some(value) = api_key_override {
+        return Ok(value.to_string());
+    }
+    let cached = {
+        let guard = state.lock().map_err(|_| anyhow!("Runtime state is unavailable."))?;
+        guard.runtime.cached_api_key.clone()
+    };
+    if let Some(value) = cached.filter(|v| !v.is_empty()) {
+        return Ok(value);
+    }
+    if !config.open_ai_api_key.is_empty() {
+        return Ok(config.open_ai_api_key.clone());
+    }
+    bail!("OpenAI API key is missing from runtime config.");
+}
+
+fn spawn_sidecar_child(
+    repo_path: &Path,
+    runtime_root: &Path,
+    config: &RuntimeConfig,
+    api_key: &str,
+) -> Result<(Child, u16)> {
+    let port = pick_port()?;
+    let logs_root = runtime_root.parent().unwrap_or(runtime_root).join("logs");
+    fs::create_dir_all(runtime_root)?;
+    fs::create_dir_all(&logs_root)?;
+    let port_file = runtime_root.join("sidecar-port.txt");
+    let log_path = logs_root.join("sidecar.log");
     let stdout = fs::OpenOptions::new().create(true).append(true).open(&log_path)?;
     let stderr = fs::OpenOptions::new().create(true).append(true).open(&log_path)?;
-    emit_log(app, "system", "sidecar", &format!("Starting the Python sidecar on port {port}."));
     let child = Command::new("uv")
         .current_dir(repo_path)
         .env("OPENAI_API_KEY", api_key)
@@ -744,140 +452,218 @@ fn restart_sidecar_with_config(
         .stderr(Stdio::from(stderr))
         .spawn()
         .context("Failed to start the Python sidecar.")?;
-
-    {
-        let mut guard = state.lock().map_err(|_| anyhow!("Runtime state is unavailable."))?;
-        guard.runtime.sidecar_child = Some(child);
-        guard.runtime.sidecar_port = Some(port);
-    }
-
-    wait_for_health(state)?;
-    Ok(port)
+    Ok((child, port))
 }
 
-fn wait_for_health(state: &State<'_, Mutex<DesktopState>>) -> Result<()> {
-    let port = {
-        let guard = state.lock().map_err(|_| anyhow!("Runtime state is unavailable."))?;
-        guard
-            .runtime
-            .sidecar_port
-            .ok_or_else(|| anyhow!("Sidecar port is not configured."))?
-    };
-    let url = format!("http://127.0.0.1:{port}/health");
+struct ChildGuard {
+    child: Option<Child>,
+}
+
+impl ChildGuard {
+    fn new(child: Child) -> Self {
+        Self { child: Some(child) }
+    }
+
+    fn defuse(mut self) -> Child {
+        self.child.take().expect("child already taken")
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+fn drain_old_sidecar(mut child: Child, port: Option<u16>) {
+    thread::spawn(move || {
+        let pid = child.id();
+        let start = Instant::now();
+        let drain_limit = Duration::from_secs(300);
+        if let Some(port) = port {
+            loop {
+                let runs = query_active_runs(port);
+                if runs.is_empty() {
+                    break;
+                }
+                if start.elapsed() >= drain_limit {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(750));
+            }
+        }
+        #[cfg(unix)]
+        {
+            let _ = Command::new("kill").arg("-TERM").arg(pid.to_string()).status();
+            thread::sleep(Duration::from_millis(500));
+        }
+        #[cfg(windows)]
+        let _ = pid;
+        if child.try_wait().ok().flatten().is_none() {
+            let _ = child.kill();
+        }
+        let _ = child.wait();
+    });
+}
+
+fn emit_sidecar_changed(app: &AppHandle, old_port: Option<u16>, new_port: u16) {
+    let _ = app.emit(
+        "sidecar-changed",
+        serde_json::json!({
+            "swapId": unix_timestamp(),
+            "oldPort": old_port,
+            "newPort": new_port,
+            "baseUrl": format!("http://127.0.0.1:{new_port}"),
+        }),
+    );
+}
+
+fn health_probe(port: u16) -> Result<bool> {
+    let mut stream = connect_local(port, Duration::from_millis(500))?;
+    stream.set_read_timeout(Some(Duration::from_millis(750)))?;
+    stream.set_write_timeout(Some(Duration::from_millis(500)))?;
+    stream.write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")?;
+    let mut buf = [0u8; 64];
+    let n = stream.read(&mut buf)?;
+    Ok(buf[..n].starts_with(b"HTTP/1.1 200"))
+}
+
+fn ready_probe(port: u16) -> Result<bool> {
+    let mut stream = connect_local(port, Duration::from_millis(500))?;
+    stream.set_read_timeout(Some(Duration::from_millis(1500)))?;
+    stream.set_write_timeout(Some(Duration::from_millis(500)))?;
+    stream.write_all(b"GET /ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")?;
+    let mut buf = [0u8; 128];
+    let n = stream.read(&mut buf)?;
+    Ok(buf[..n].starts_with(b"HTTP/1.1 200"))
+}
+
+fn wait_for_ready(port: u16, timeout: Duration) -> Result<()> {
     let start = Instant::now();
-    while start.elapsed() < Duration::from_secs(15) {
-        let output = Command::new("curl")
-            .arg("-fsS")
-            .arg(url.as_str())
-            .output();
-        if let Ok(output) = output {
-            if output.status.success() {
+    while start.elapsed() < timeout {
+        if ready_probe(port).unwrap_or(false) {
+            if health_probe(port).unwrap_or(false) {
                 return Ok(());
             }
         }
-        thread::sleep(Duration::from_millis(350));
+        thread::sleep(Duration::from_millis(250));
     }
-    bail!("Timed out waiting for the Python sidecar health check.")
+    bail!("Timed out waiting for the sidecar to become ready.")
 }
 
-fn runtime_paths(state: &State<'_, Mutex<DesktopState>>) -> Result<(PathBuf, PathBuf)> {
-    let guard = state.lock().map_err(|_| anyhow!("Runtime state is unavailable."))?;
-    Ok((
-        guard
-            .runtime
-            .repo_path
-            .clone()
-            .ok_or_else(|| anyhow!("Runtime repo is not bootstrapped yet."))?,
-        guard
-            .runtime
-            .runtime_root
-            .clone()
-            .ok_or_else(|| anyhow!("Runtime directory is not ready."))?,
-    ))
+fn query_active_runs(port: u16) -> Vec<String> {
+    let Ok(mut stream) = connect_local(port, Duration::from_millis(500)) else {
+        return Vec::new();
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(1500)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+    if stream
+        .write_all(b"GET /runs/active HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .is_err()
+    {
+        return Vec::new();
+    }
+    let mut buf = Vec::new();
+    if stream.read_to_end(&mut buf).is_err() {
+        return Vec::new();
+    }
+    let text = String::from_utf8_lossy(&buf);
+    let Some(body_start) = text.find("\r\n\r\n") else {
+        return Vec::new();
+    };
+    let body = &text[body_start + 4..];
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| value.get("run_ids").cloned())
+        .and_then(|value| value.as_array().cloned())
+        .map(|items| {
+            items
+                .into_iter()
+                .filter_map(|value| value.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
-fn run_codex(
+fn connect_local(port: u16, timeout: Duration) -> Result<TcpStream> {
+    let addr = format!("127.0.0.1:{port}").parse::<std::net::SocketAddr>()?;
+    Ok(TcpStream::connect_timeout(&addr, timeout)?)
+}
+
+fn save_artifact_to_downloads_impl(
     app: &AppHandle,
-    run_id: &str,
-    worktree_path: &Path,
-    prompt: &str,
-    config: &RuntimeConfig,
-    api_key: &str,
-) -> Result<std::process::Output> {
-    let mut child = Command::new("codex")
-        .current_dir(worktree_path)
-        .env("OPENAI_API_KEY", api_key)
-        .env("OPENAI_API_BASE", &config.open_ai_base_url)
-        .env("OPENAI_SANDBOX_MODEL", &config.sandbox_model)
-        .arg("exec")
-        .arg("--json")
-        .arg("--cd")
-        .arg(worktree_path)
-        .arg("--ask-for-approval")
-        .arg("never")
-        .arg("--sandbox")
-        .arg("workspace-write")
-        .arg("--")
-        .arg(prompt)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("Failed to launch Codex.")?;
+    state: &State<'_, Mutex<DesktopState>>,
+    stored_path: &str,
+    filename: &str,
+) -> Result<String> {
+    let guard = state.lock().map_err(|_| anyhow!("Runtime state is unavailable."))?;
+    let repo_path = guard
+        .runtime
+        .repo_path
+        .clone()
+        .ok_or_else(|| anyhow!("Runtime repo is not bootstrapped yet."))?;
+    drop(guard);
 
-    let stdout = child.stdout.take().ok_or_else(|| anyhow!("Codex stdout was unavailable."))?;
-    let stderr = child.stderr.take().ok_or_else(|| anyhow!("Codex stderr was unavailable."))?;
-    let app_stdout = app.clone();
-    let app_stderr = app.clone();
-    let run_id_out = run_id.to_string();
-    let run_id_err = run_id.to_string();
+    let source = PathBuf::from(stored_path);
+    if !source.exists() {
+        bail!("Artifact file does not exist.");
+    }
 
-    let stdout_thread = thread::spawn(move || -> Result<()> {
-        for line in BufReader::new(stdout).lines() {
-            let line = line?;
-            if !line.trim().is_empty() {
-                emit_log(&app_stdout, &run_id_out, "codex", &line);
-            }
-        }
-        Ok(())
-    });
-    let stderr_thread = thread::spawn(move || -> Result<()> {
-        for line in BufReader::new(stderr).lines() {
-            let line = line?;
-            if !line.trim().is_empty() {
-                emit_log(&app_stderr, &run_id_err, "codex", &line);
-            }
-        }
-        Ok(())
-    });
+    let repo_root = repo_path.canonicalize()?;
+    let source_path = source.canonicalize()?;
+    if !source_path.starts_with(&repo_root) {
+        bail!("Artifact path is outside the runtime repo.");
+    }
 
-    let status = child.wait()?;
-    stdout_thread.join().map_err(|_| anyhow!("Codex stdout thread panicked."))??;
-    stderr_thread.join().map_err(|_| anyhow!("Codex stderr thread panicked."))??;
+    let downloads_dir = app
+        .path()
+        .download_dir()
+        .or_else(|_| std::env::var("HOME").map(PathBuf::from).map(|home| home.join("Downloads")))
+        .context("Failed to determine the Downloads directory.")?;
+    fs::create_dir_all(&downloads_dir)?;
 
-    Ok(std::process::Output {
-        status,
-        stdout: Vec::new(),
-        stderr: Vec::new(),
-    })
+    let safe_name = if filename.trim().is_empty() {
+        source_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("artifact.bin")
+            .to_string()
+    } else {
+        filename.to_string()
+    };
+
+    let destination = unique_destination_path(&downloads_dir, &safe_name);
+    fs::copy(&source_path, &destination)?;
+    Ok(destination.display().to_string())
 }
 
-fn cleanup_preview_worktree(repo_path: &Path, worktree_path: &Path) -> Result<()> {
-    let _ = run_checked(
-        repo_path,
-        "git",
-        [
-            "-C",
-            repo_path.to_string_lossy().as_ref(),
-            "worktree",
-            "remove",
-            "--force",
-            worktree_path.to_string_lossy().as_ref(),
-        ],
-    );
-    if worktree_path.exists() {
-        fs::remove_dir_all(worktree_path)?;
+fn unique_destination_path(downloads_dir: &Path, filename: &str) -> PathBuf {
+    let candidate = downloads_dir.join(filename);
+    if !candidate.exists() {
+        return candidate;
     }
-    Ok(())
+
+    let stem = Path::new(filename)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("artifact");
+    let extension = Path::new(filename)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| format!(".{value}"))
+        .unwrap_or_default();
+
+    for index in 2..1000 {
+        let candidate = downloads_dir.join(format!("{stem}-{index}{extension}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    downloads_dir.join(format!("{stem}-copy{extension}"))
 }
 
 fn docker_available() -> bool {
@@ -888,24 +674,6 @@ fn docker_available() -> bool {
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
-}
-
-fn git_output<const N: usize>(repo_path: &Path, args: [&str; N]) -> Result<String> {
-    let output = Command::new("git")
-        .current_dir(repo_path)
-        .args(args)
-        .output()
-        .context("Failed to invoke git.")?;
-    ensure_success("git", args.as_slice(), &output.status, &output.stderr)?;
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-fn git_lines<const N: usize>(repo_path: &Path, args: [&str; N]) -> Result<Vec<String>> {
-    Ok(git_output(repo_path, args)?
-        .lines()
-        .map(|line| line.trim().to_string())
-        .filter(|line| !line.is_empty())
-        .collect())
 }
 
 fn run_checked<const N: usize>(cwd: &Path, command: &str, args: [&str; N]) -> Result<()> {
@@ -929,23 +697,6 @@ fn ensure_success(command: &str, args: &[&str], status: &ExitStatus, stderr: &[u
     )
 }
 
-fn path_allowed(path: &str) -> bool {
-    if path.starts_with("src-tauri/") {
-        return false;
-    }
-    if path == "python-sidecar/src/sandflow_sidecar/contract.py" {
-        return false;
-    }
-    if path == ".env" || path.contains("secret") || path.ends_with(".key") || path.ends_with(".pem") {
-        return false;
-    }
-    path == "AGENTS.md"
-        || path == "python-sidecar/pyproject.toml"
-        || path == "web/package.json"
-        || path.starts_with("web/")
-        || path.starts_with("python-sidecar/")
-}
-
 fn pick_port() -> Result<u16> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let port = listener.local_addr()?.port();
@@ -953,42 +704,11 @@ fn pick_port() -> Result<u16> {
     Ok(port)
 }
 
-fn truncate_commit_message(prompt: &str) -> String {
-    let trimmed = prompt.trim();
-    let shortened = trimmed.chars().take(72).collect::<String>();
-    format!("Customise: {shortened}")
-}
-
 fn unix_timestamp() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or(0)
-}
-
-fn emit_log(app: &AppHandle, run_id: &str, phase: &str, message: &str) {
-    let _ = app.emit(
-        "customise-log",
-        CustomiseLogEvent {
-            run_id: run_id.to_string(),
-            phase: phase.to_string(),
-            message: message.to_string(),
-        },
-    );
-}
-
-impl From<PreviewRun> for CustomisePreview {
-    fn from(value: PreviewRun) -> Self {
-        Self {
-            run_id: value.run_id,
-            prompt: value.prompt,
-            base_commit: value.base_commit,
-            diff: value.diff,
-            changed_paths: value.changed_paths,
-            allowed: value.allowed,
-            error: value.error,
-        }
-    }
 }
 
 pub fn run() {
@@ -1002,7 +722,7 @@ pub fn run() {
                     if let Some(repo_path) = status.repo_path.clone().map(PathBuf::from) {
                         let app_data_dir = handle.path().app_data_dir()?;
                         let runtime_root = app_data_dir.join("runtime");
-                        let _ = restart_sidecar_from_state(&handle, &state, &repo_path, &runtime_root);
+                        let _ = hot_swap_sidecar(&handle, &state, &repo_path, &runtime_root);
                     }
                 }
             }
@@ -1010,15 +730,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             bootstrap_runtime,
-            discard_customise_run,
-            get_customise_history,
-            get_customise_preview,
             get_runtime_status,
-            open_repo_in_editor,
-            apply_customise_run,
-            reset_customisations,
-            revert_custom_commit,
-            start_customise_run,
+            reveal_path_in_finder,
+            save_artifact_to_downloads,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
