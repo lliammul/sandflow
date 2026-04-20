@@ -77,6 +77,10 @@ async function main() {
   const codex = new Codex({
     apiKey: input.apiKey,
     baseUrl: input.baseUrl,
+    config: {
+      include_apply_patch_tool: true,
+      experimental_use_freeform_apply_patch: true,
+    },
     env: {
       PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
       HOME: process.env.HOME ?? "",
