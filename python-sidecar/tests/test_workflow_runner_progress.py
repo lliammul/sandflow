@@ -12,6 +12,7 @@ from agents.stream_events import AgentUpdatedStreamEvent, RawResponsesStreamEven
 from sandflow_sidecar.models import (
     InputFieldDefinition,
     OutputFieldDefinition,
+    WorkflowExecutionArtifact,
     WorkflowDefinition,
 )
 from sandflow_sidecar import workflow_runner
@@ -62,6 +63,14 @@ class FakeStreamingResult:
 class FakeAgent:
     def __init__(self, name: str):
         self.name = name
+
+
+class FakeReadHandle:
+    def __init__(self, payload: bytes):
+        self.payload = payload
+
+    def read(self):
+        return self.payload
 
 
 def build_workflow() -> WorkflowDefinition:
@@ -331,6 +340,29 @@ def test_validate_persisted_artifact_rejects_fake_pptx(tmp_path):
 
     with pytest.raises(ValueError, match="valid Office package|valid PowerPoint"):
         workflow_runner._validate_persisted_artifact(artifact, "pptx")
+
+
+def test_persist_artifacts_records_absolute_stored_path(monkeypatch, tmp_path):
+    class ArtifactSession:
+        async def read(self, path):
+            assert str(path) == "outputs/artifacts/report.txt"
+            return FakeReadHandle(b"artifact body")
+
+    monkeypatch.chdir(tmp_path)
+    artifacts = [
+        WorkflowExecutionArtifact(
+            artifact_id="report",
+            label="Report",
+            path="outputs/artifacts/report.txt",
+            format="txt",
+        )
+    ]
+
+    persisted = asyncio.run(workflow_runner._persist_artifacts("run-1", ArtifactSession(), artifacts))
+
+    stored_path = persisted[0].stored_path
+    assert stored_path == str((tmp_path / ".application" / "artifacts" / "run-1" / "report.txt").resolve())
+    assert (tmp_path / ".application" / "artifacts" / "run-1" / "report.txt").read_bytes() == b"artifact body"
 
 
 def test_agent_instructions_reference_python3_for_office_scripts():

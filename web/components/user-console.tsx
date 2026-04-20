@@ -361,7 +361,6 @@ export function UserConsole() {
                   artifactId={artifact.artifact_id}
                   label={artifact.label}
                   filename={artifact.filename}
-                  storedPath={artifact.stored_path}
                 />
               ))}
             </div>
@@ -542,67 +541,68 @@ function ArtifactLink({
   artifactId,
   label,
   filename,
-  storedPath,
 }: {
   runId: string;
   artifactId: string;
   label: string;
   filename: string;
-  storedPath: string;
 }) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState("");
-  const [savedPath, setSavedPath] = useState("");
   const desktopMode = isTauriRuntime();
+
+  const downloadViaBrowser = async () => {
+    const blob = await sidecar.downloadArtifact(runId, artifactId);
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = filename || `${artifactId}.bin`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  };
+
   return (
-    <button
-      type="button"
-      className={clsx("btn", error && "border-[color:var(--danger)] text-[color:var(--danger)]")}
-      aria-label={`${desktopMode ? (savedPath ? "Reveal" : "Save") : "Download"} ${label}`}
-      disabled={isPending}
-      onClick={() =>
-        startTransition(async () => {
-          try {
-            setError("");
-            if (desktopMode) {
-              if (savedPath) {
-                await tauriClient.revealPathInFinder(savedPath);
+    <div className="flex flex-col gap-1">
+      <button
+        type="button"
+        className={clsx("btn", error && "border-[color:var(--danger)] text-[color:var(--danger)]")}
+        aria-label={`${desktopMode ? "Open" : "Download"} ${label}`}
+        title={filename || label}
+        disabled={isPending}
+        onClick={() =>
+          startTransition(async () => {
+            try {
+              setError("");
+              if (desktopMode) {
+                const artifactUrl = await sidecar.artifactUrl(runId, artifactId);
+                await tauriClient.openExternal(artifactUrl);
                 return;
               }
-              const nextSavedPath = await tauriClient.saveArtifactToDownloads(
-                storedPath,
-                filename || `${artifactId}.bin`,
-              );
-              setSavedPath(nextSavedPath);
-              return;
+              await downloadViaBrowser();
+            } catch (event) {
+              if (desktopMode) {
+                try {
+                  await downloadViaBrowser();
+                  return;
+                } catch {}
+              }
+              setError(event instanceof Error ? event.message : "Download failed.");
             }
-            const blob = await sidecar.downloadArtifact(runId, artifactId);
-            const objectUrl = URL.createObjectURL(blob);
-            const anchor = document.createElement("a");
-            anchor.href = objectUrl;
-            anchor.download = filename || `${artifactId}.bin`;
-            document.body.appendChild(anchor);
-            anchor.click();
-            anchor.remove();
-            window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-          } catch (event) {
-            setError(event instanceof Error ? event.message : "Download failed.");
-          }
-        })
-      }
-    >
-      <IconDownload size={13} />
-      {isPending
-        ? desktopMode
-          ? savedPath
-            ? "Opening…"
-            : "Saving…"
-          : "Downloading…"
-        : desktopMode
-          ? savedPath
-            ? "Reveal In Finder"
-            : "Save To Downloads"
-          : label}
-    </button>
+          })
+        }
+      >
+        <IconDownload size={13} />
+        <span className="max-w-[220px] truncate">
+          {isPending ? (desktopMode ? "Opening..." : "Downloading...") : desktopMode ? `Open ${label}` : `Download ${label}`}
+        </span>
+      </button>
+      {error ? (
+        <span className="max-w-[260px] text-xs leading-5 text-[color:var(--danger)]" role="alert">
+          {error}
+        </span>
+      ) : null}
+    </div>
   );
 }
