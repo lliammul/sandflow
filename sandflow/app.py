@@ -5,8 +5,11 @@ import reflex as rx
 from .components.common import STYLESHEETS
 from .pages.builder import builder_page
 from .pages.user import user_page
+from .storage import ensure_storage
 from .state.builder_state import BuilderState
 from .state.user_state import UserState
+
+ensure_storage()
 
 app = rx.App(
     theme=rx.theme(appearance="light"),
