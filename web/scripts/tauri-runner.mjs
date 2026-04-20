@@ -24,11 +24,18 @@ if (tauriArgs[0] === "dev" && resetState) {
   reseedDevRuntimeRepo();
 }
 
+const childEnv = { ...process.env };
+if (process.platform === "darwin" && tauriArgs[0] === "build" && !("CI" in childEnv)) {
+  // DMG bundling falls back to a headless-safe path when CI is set, which avoids
+  // Finder Apple Events during local terminal builds.
+  childEnv.CI = "true";
+}
+
 const child = spawn(tauriBinary, tauriArgs, {
   cwd: projectRoot,
   detached: process.platform !== "win32",
   stdio: "inherit",
-  env: process.env,
+  env: childEnv,
 });
 
 let forwardedSignal = null;
