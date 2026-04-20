@@ -649,7 +649,7 @@ async def _persist_artifacts(
                 artifact_id=artifact.artifact_id,
                 label=artifact.label,
                 format=artifact_format,
-                stored_path=str(local_path),
+                stored_path=str(local_path.resolve()),
                 filename=local_path.name,
                 mime_type=artifact.mime_type or _mime_type_from_filename(local_path.name),
             )
