@@ -1,4 +1,4 @@
-# Sandflow Desktop MVP
+# Sandflow Desktop
 
 Sandflow is now structured as a desktop-first app:
 
@@ -15,35 +15,59 @@ Sandflow is now structured as a desktop-first app:
 
 ## Local Development
 
-Install the web and sidecar dependencies:
+Install the workspace and sidecar dependencies:
 
 ```bash
 pnpm install
 uv sync --project python-sidecar
 ```
 
-Run the sidecar and web app separately during development:
+The repo is a pnpm workspace; the root install covers `web/` and
+`codex-runner/`. The sidecar uses its own uv project under
+`python-sidecar/`.
+
+### Browser-only development
+
+Run the sidecar and web app separately when developing the frontend in a
+browser:
 
 ```bash
 pnpm dev:sidecar
-pnpm dev:web
+NEXT_PUBLIC_SIDECAR_BASE_URL=http://127.0.0.1:8000 pnpm dev:web
 ```
 
-The frontend expects the sidecar at `http://127.0.0.1:8000` unless `NEXT_PUBLIC_SIDECAR_BASE_URL` is set.
+The sidecar binds to `127.0.0.1` and defaults to port `8000`. Outside the
+Tauri runtime, the frontend needs `NEXT_PUBLIC_SIDECAR_BASE_URL` so it can find
+the sidecar.
 
-Desktop dev mode uses:
+### Desktop development
+
+Run the desktop shell with:
 
 ```bash
 pnpm tauri:dev
 ```
 
-That command now reseeds `~/Library/Application Support/com.sandflow.desktop/repo` from the current workspace before launching Tauri, so runtime-side changes always reflect the latest local source without manually deleting the app-data repo first.
+Tauri starts the Next.js dev server on port `3100`, bootstraps a writable
+runtime repo under app data, installs runtime dependencies there, and starts the
+sidecar on an available local port after setup.
+
+The app-data runtime repo is reused between launches. To reseed it from the
+current workspace before launching Tauri, run:
+
+```bash
+pnpm tauri:dev -- --reset-state
+```
 
 ## Sidecar API
 
 The Python sidecar exposes:
 
 - `GET /health`
+- `GET /ready`
+- `GET /runs/active`
+- `POST /runs/pause`
+- `POST /runs/resume`
 - `GET /workflow-entries`
 - `GET /workflows`
 - `GET /workflows/:id`
@@ -74,8 +98,14 @@ pnpm build:web
 ## Runtime Requirements
 
 - Docker must be running locally for workflow execution.
-- The sidecar requires `OPENAI_API_KEY` and `OPENAI_SANDBOX_MODEL` at runtime.
-- The desktop shell bootstraps a writable runtime repo in app-data and currently stores the OpenAI API key in the local runtime config file for MVP convenience.
+- `uv`, `pnpm`, `git`, and `rsync` must be available for desktop bootstrap and
+  customise previews.
+- Workflow execution requires `OPENAI_API_KEY` and `OPENAI_SANDBOX_MODEL`.
+- `OPENAI_API_BASE` is optional and can point the sidecar at a compatible API
+  endpoint.
+- The desktop shell bootstraps a writable runtime repo in app data and stores
+  runtime configuration, including the OpenAI API key, in the local runtime
+  config file for MVP convenience.
 
 ## Customise Flow
 
@@ -83,15 +113,14 @@ Sandflow ships an in-app customise pipeline: describe a change, a preview clone
 of the runtime is spun up with its own sidecar and Next.js dev server, Codex
 makes the change, and you approve or discard.
 
-Build the Codex runner bundle once before running Tauri:
+Build the Codex runner bundle before using the Customise tab:
 
 ```bash
-pnpm --dir codex-runner install
 pnpm --dir codex-runner build
 ```
 
 Then start the desktop app (`pnpm tauri:dev`), open the **Customise** tab, and
-follow the prompt → review → approve flow. Locked paths are listed in
+follow the prompt, review, and approve flow. Locked paths are listed in
 `AGENTS.md`; apply is blocked automatically if the preview touches any of them.
 
 Preview workspaces live at

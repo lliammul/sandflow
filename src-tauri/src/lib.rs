@@ -151,6 +151,20 @@ fn open_external(url: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Resolve where the running app should read code from.
+///
+/// Defaults to `<app-data>/repo`, matching the packaged runtime layout. Set
+/// `SANDFLOW_REPO_DIR` to point at any other checkout — the workspace for plain
+/// `tauri:dev`, or the app-data repo explicitly for `tauri:dev:customise` so
+/// customise-applied edits land in the tree Next + the sidecar are watching.
+fn resolve_repo_path(app_data_dir: &Path) -> PathBuf {
+    std::env::var("SANDFLOW_REPO_DIR")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| app_data_dir.join("repo"))
+}
+
 fn bootstrap_runtime_impl(
     app: &AppHandle,
     state: &State<'_, Mutex<DesktopState>>,
@@ -162,7 +176,7 @@ fn bootstrap_runtime_impl(
         .context("Failed to determine the app-data directory.")?;
     let runtime_root = app_data_dir.join("runtime");
     let logs_root = app_data_dir.join("logs");
-    let repo_path = app_data_dir.join("repo");
+    let repo_path = resolve_repo_path(&app_data_dir);
     fs::create_dir_all(&runtime_root)?;
     fs::create_dir_all(&logs_root)?;
 
@@ -216,7 +230,7 @@ fn bootstrap_runtime_impl(
 fn load_runtime_status(app: &AppHandle, state: &State<'_, Mutex<DesktopState>>) -> Result<RuntimeStatus> {
     let app_data_dir = app.path().app_data_dir()?;
     let runtime_root = app_data_dir.join("runtime");
-    let repo_path = app_data_dir.join("repo");
+    let repo_path = resolve_repo_path(&app_data_dir);
     let config = load_runtime_config(&runtime_root).unwrap_or_default();
     let bootstrapped = repo_path.exists();
     let docker = docker_available();

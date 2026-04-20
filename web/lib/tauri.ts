@@ -15,6 +15,26 @@ export function isTauriRuntime() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+function isLocalPreviewUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.protocol === "http:" &&
+      (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function tryWindowOpen(url: string): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  const opened = window.open(url, "_blank", "noopener,noreferrer");
+  return opened !== null;
+}
+
 let runtimeStatusCache: RuntimeStatus | null = null;
 
 export const tauriClient = {
@@ -38,7 +58,19 @@ export const tauriClient = {
     return invoke<void>("reveal_path_in_finder", { path });
   },
   async openExternal(url: string) {
-    return invoke<void>("open_external", { url });
+    if (!isTauriRuntime()) {
+      if (tryWindowOpen(url)) return;
+      throw new Error("Unable to open link in this environment.");
+    }
+    try {
+      await invoke<void>("open_external", { url });
+    } catch (error) {
+      // Fallback for cases where the command errors in-webview.
+      if (isLocalPreviewUrl(url) && tryWindowOpen(url)) {
+        return;
+      }
+      throw error;
+    }
   },
   async getCustomiseStatus() {
     if (!isTauriRuntime()) {

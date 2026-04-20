@@ -114,6 +114,16 @@ export function CustomiseConsole() {
     }
   }, []);
 
+  const handleOpenExternal = useCallback(async (url: string, label: string) => {
+    setError(null);
+    try {
+      await tauriClient.openExternal(url);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      setError(`Failed to open ${label}: ${detail}`);
+    }
+  }, []);
+
   const isActive = status && !TERMINAL_STATES.includes(status.state);
   const canApprove =
     status?.state === "ready_for_review" && status.lockedViolations.length === 0;
@@ -182,7 +192,7 @@ export function CustomiseConsole() {
                   <button
                     type="button"
                     className="btn btn-ghost"
-                    onClick={() => void tauriClient.openExternal(status.previewWebUrl!)}
+                    onClick={() => void handleOpenExternal(status.previewWebUrl!, "preview web")}
                   >
                     Open preview web →
                   </button>
@@ -191,7 +201,9 @@ export function CustomiseConsole() {
                   <button
                     type="button"
                     className="btn btn-ghost"
-                    onClick={() => void tauriClient.openExternal(`${status.previewSidecarUrl}/health`)}
+                    onClick={() =>
+                      void handleOpenExternal(`${status.previewSidecarUrl}/health`, "preview sidecar")
+                    }
                   >
                     Preview sidecar →
                   </button>
