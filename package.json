@@ -1,0 +1,13 @@
+{
+  "name": "sandflow-desktop-workspace",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "dev:web": "pnpm --dir web dev",
+    "build:web": "pnpm --dir web build",
+    "dev:sidecar": "uv run --project python-sidecar python -m sandflow_sidecar --port 8000",
+    "test:sidecar": "uv run --project python-sidecar pytest python-sidecar/tests",
+    "tauri:dev": "node ./web/scripts/tauri-runner.mjs dev --config src-tauri/tauri.conf.json",
+    "tauri:build": "node ./web/scripts/tauri-runner.mjs build --config src-tauri/tauri.conf.json"
+  }
+}

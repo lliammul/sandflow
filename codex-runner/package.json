@@ -1,0 +1,22 @@
+{
+  "name": "sandflow-codex-runner",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Node subprocess that runs the Codex TS SDK for Sandflow customise previews.",
+  "bin": {
+    "sandflow-codex-runner": "dist/index.mjs"
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@openai/codex": "0.121.0",
+    "@openai/codex-sdk": "0.121.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.12",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.9.3"
+  }
+}
