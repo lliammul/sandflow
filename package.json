@@ -7,7 +7,8 @@
     "build:web": "pnpm --dir web build",
     "dev:sidecar": "uv run --project python-sidecar python -m sandflow_sidecar --port 8000",
     "test:sidecar": "uv run --project python-sidecar pytest python-sidecar/tests",
-    "tauri:dev": "node ./web/scripts/tauri-runner.mjs dev --config src-tauri/tauri.conf.json",
+    "tauri:dev": "SANDFLOW_DEV_RELOAD=1 node ./web/scripts/tauri-runner.mjs dev --config src-tauri/tauri.conf.json",
+    "tauri:dev:customise": "SANDFLOW_REPO_DIR=\"$HOME/Library/Application Support/com.sandflow.desktop/repo\" SANDFLOW_DEV_RELOAD=1 node ./web/scripts/tauri-runner.mjs dev --config src-tauri/tauri.conf.json",
     "tauri:build": "node ./web/scripts/tauri-runner.mjs build --config src-tauri/tauri.conf.json"
   }
 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import socket
 import sys
 from pathlib import Path
@@ -23,7 +24,21 @@ def main() -> None:
         args.port_file.write_text(str(port), encoding="utf-8")
     ensure_storage()
     print(f"PORT={port}", file=sys.stderr, flush=True)
-    uvicorn.run(create_app(), host="127.0.0.1", port=port, log_level="info")
+
+    if os.environ.get("SANDFLOW_DEV_RELOAD") == "1":
+        # Uvicorn's file-watch reloader requires an import string + factory
+        # instead of a constructed app, so it can re-import on edits.
+        uvicorn.run(
+            "sandflow_sidecar.contract:create_app",
+            factory=True,
+            host="127.0.0.1",
+            port=port,
+            log_level="info",
+            reload=True,
+            reload_dirs=[str(Path(__file__).resolve().parent)],
+        )
+    else:
+        uvicorn.run(create_app(), host="127.0.0.1", port=port, log_level="info")
 
 
 def _pick_free_port() -> int:
